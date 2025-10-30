@@ -106,12 +106,12 @@ export const userApi = {
   },
 
   activateUser: async (userId: string): Promise<ApiResponse<User>> => {
-    const response = await api.put(`/api/v1/admin/users/${userId}/activate`)
+    const response = await api.post(`/api/v1/admin/users/${userId}/activate`)
     return response.data
   },
 
   deactivateUser: async (userId: string): Promise<ApiResponse<User>> => {
-    const response = await api.put(`/api/v1/admin/users/${userId}/deactivate`)
+    const response = await api.post(`/api/v1/admin/users/${userId}/deactivate`)
     return response.data
   },
 
@@ -242,12 +242,12 @@ export const adminApi = {
   },
 
   activateUser: async (userId: string): Promise<ApiResponse<User>> => {
-    const response = await api.put(`/api/v1/admin/users/${userId}/activate`)
+    const response = await api.post(`/api/v1/admin/users/${userId}/activate`)
     return response.data
   },
 
   deactivateUser: async (userId: string): Promise<ApiResponse<User>> => {
-    const response = await api.put(`/api/v1/admin/users/${userId}/deactivate`)
+    const response = await api.post(`/api/v1/admin/users/${userId}/deactivate`)
     return response.data
   },
 
