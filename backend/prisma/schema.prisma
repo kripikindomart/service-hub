@@ -1,0 +1,374 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// Universal Enums
+enum EntityStatus {
+  DRAFT
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING
+  REJECTED
+  ARCHIVED
+  DELETED
+}
+
+enum DeletionStatus {
+  SOFT_DELETED
+  HARD_DELETED
+  ARCHIVED
+}
+
+enum TenantType {
+  CORE
+  BUSINESS
+  TRIAL
+}
+
+enum SubscriptionTier {
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
+  CUSTOM
+}
+
+enum RoleType {
+  SYSTEM
+  TENANT
+  CUSTOM
+}
+
+enum RoleLevel {
+  SUPER_ADMIN
+  ADMIN
+  MANAGER
+  USER
+  GUEST
+}
+
+enum PermissionScope {
+  OWN
+  TENANT
+  ALL
+}
+
+enum BulkActionStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum ActionResult {
+  SUCCESS
+  FAILED
+  SKIPPED
+}
+
+enum ImpactLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum ConditionOperator {
+  EQUALS
+  NOT_EQUALS
+  IN
+  NOT_IN
+  GREATER_THAN
+  LESS_THAN
+  BETWEEN
+  CONTAINS
+  STARTS_WITH
+  ENDS_WITH
+}
+
+// Users Table
+model User {
+  id                String          @id @default(uuid())
+  email             String          @unique
+  passwordHash      String          @map("password_hash")
+  name              String
+  status            EntityStatus    @default(PENDING)
+  emailVerified     Boolean         @default(false) @map("email_verified")
+  avatarUrl         String?         @map("avatar_url")
+  timezone          String          @default("UTC")
+  language          String          @default("en")
+  phone             String?
+  lastLoginAt       DateTime?       @map("last_login_at")
+  passwordChangedAt DateTime        @default(now()) @map("password_changed_at")
+  failedLoginAttempts Int           @default(0) @map("failed_login_attempts")
+  lockedUntil       DateTime?       @map("locked_until")
+  tokenVersion      Int             @default(0) @map("token_version")
+  preferences       Json?
+  profileMetadata   Json?           @map("profile_metadata")
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+  createdBy         String?         @map("created_by")
+  updatedBy         String?         @map("updated_by")
+
+  // Relations
+  homeTenant        Tenant?          @relation("HomeTenant", fields: [homeTenantId], references: [id])
+  homeTenantId      String?          @map("home_tenant_id")
+  currentTenant     Tenant?         @relation("CurrentTenant", fields: [currentTenantId], references: [id])
+  currentTenantId   String?         @map("current_tenant_id")
+  createdTenants    Tenant[]        @relation("TenantCreator")
+  userTenants       UserTenant[]
+  sessions          Session[]
+  createdBulkActions BulkAction[]   @relation("BulkActionCreator")
+  executedBulkActions BulkAction[]  @relation("BulkActionExecutor")
+
+  @@map("users")
+  @@index([email])
+  @@index([status])
+  @@index([createdAt])
+  @@index([lastLoginAt])
+}
+
+// Tenants Table
+model Tenant {
+  id                String          @id @default(uuid())
+  name              String
+  slug              String          @unique
+  domain            String?         @unique
+  type              TenantType      @default(BUSINESS)
+  tier              SubscriptionTier @default(STARTER)
+  status            EntityStatus    @default(PENDING)
+  maxUsers          Int             @default(10)
+  maxServices       Int             @default(5)
+  storageLimitMb    Int             @default(1024) @map("storage_limit_mb")
+  databaseName      String          @unique @map("database_name")
+  databaseHost      String?         @map("database_host")
+  databasePort      Int             @default(3306) @map("database_port")
+  primaryColor      String          @default("#3B82F6") @map("primary_color")
+  logoUrl           String?         @map("logo_url")
+  faviconUrl        String?         @map("favicon_url")
+  customDomain      String?         @map("custom_domain")
+  settings          Json?
+  featureFlags      Json?           @map("feature_flags")
+  integrations      Json?
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+  createdBy         String?         @map("created_by")
+  updatedBy         String?         @map("updated_by")
+
+  // Relations
+  creator           User?           @relation("TenantCreator", fields: [createdBy], references: [id])
+  homeUsers         User[]          @relation("HomeTenant")
+  currentUsers      User[]          @relation("CurrentTenant")
+  userTenants       UserTenant[]
+  roles             Role[]
+
+  @@map("tenants")
+  @@unique([name, type])
+  @@index([slug])
+  @@index([type])
+  @@index([status])
+  @@index([tier])
+}
+
+// Roles Table
+model Role {
+  id                String          @id @default(uuid())
+  name              String
+  displayName       String          @map("display_name")
+  description       String?
+  type              RoleType        @default(TENANT)
+  level             RoleLevel       @default(USER)
+  tenantId          String?         @map("tenant_id")
+  isSystemRole      Boolean         @default(false) @map("is_system_role")
+  isDefaultRole     Boolean         @default(false) @map("is_default_role")
+  maxUsers          Int?            @map("max_users")
+  parentRoleId      String?         @map("parent_role_id")
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+
+  // Relations
+  tenant            Tenant?         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  parentRole        Role?           @relation("RoleHierarchy", fields: [parentRoleId], references: [id])
+  childRoles        Role[]          @relation("RoleHierarchy")
+  userTenants       UserTenant[]
+  rolePermissions   RolePermission[]
+
+  @@map("roles")
+  @@unique([name, tenantId])
+  @@index([type])
+  @@index([level])
+  @@index([tenantId])
+}
+
+// User Tenants Table
+model UserTenant {
+  id                String       @id @default(uuid())
+  userId            String       @map("user_id")
+  tenantId          String       @map("tenant_id")
+  roleId            String       @map("role_id")
+  status            EntityStatus @default(PENDING)
+  isPrimary         Boolean      @default(false) @map("is_primary")
+  assignedBy        String?      @map("assigned_by")
+  assignedAt        DateTime     @default(now()) @map("assigned_at")
+  expiresAt         DateTime?    @map("expires_at")
+  suspensionReason  String?      @map("suspension_reason")
+  suspensionUntil   DateTime?    @map("suspension_until")
+  suspendedBy       String?      @map("suspended_by")
+  tenantPreferences Json?        @map("tenant_preferences")
+  lastAccessedAt    DateTime?    @map("last_accessed_at")
+  accessCount       Int          @default(0) @map("access_count")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  // Relations
+  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant            Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  role              Role         @relation(fields: [roleId], references: [id])
+
+  @@map("user_tenants")
+  @@unique([userId, tenantId])
+  @@index([userId])
+  @@index([tenantId])
+  @@index([roleId])
+  @@index([status])
+}
+
+// Session Management
+model Session {
+  id           String   @id @default(uuid())
+  userId       String   @map("user_id")
+  token        String   @unique
+  refreshToken String?  @unique @map("refresh_token")
+  deviceId     String   @map("device_id")
+  userAgent    String?  @map("user_agent")
+  ipAddress    String?  @map("ip_address")
+  isActive     Boolean  @default(true) @map("is_active")
+  expiresAt    DateTime @map("expires_at")
+  lastAccessAt DateTime @default(now()) @map("last_accessed_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  // Relations
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+  @@index([userId])
+  @@index([token])
+  @@index([deviceId])
+  @@index([expiresAt])
+  @@index([isActive])
+}
+
+// Permissions Table
+model Permission {
+  id                   String         @id @default(uuid())
+  name                 String         @unique
+  resource             String
+  action               String
+  scope                PermissionScope @default(TENANT)
+  description          String?
+  category             String?
+  isSystemPermission   Boolean        @default(false) @map("is_system_permission")
+
+  createdAt            DateTime       @default(now()) @map("created_at")
+  updatedAt            DateTime       @updatedAt @map("updated_at")
+
+  // Relations
+  rolePermissions      RolePermission[]
+
+  @@map("permissions")
+  @@unique([resource, action, scope])
+  @@index([resource])
+  @@index([action])
+  @@index([scope])
+  @@index([category])
+}
+
+model RolePermission {
+  id         String   @id @default(uuid())
+  roleId     String   @map("role_id")
+  permissionId String @map("permission_id")
+  grantedAt  DateTime @default(now()) @map("granted_at")
+  grantedBy  String?  @map("granted_by")
+
+  // Relations
+  role       Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@map("role_permissions")
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+}
+
+// Bulk Actions Table
+model BulkAction {
+  id                String           @id @default(uuid())
+  actionType        String           @map("action_type")
+  entityType        String           @map("entity_type")
+  targetIds         Json             @map("target_ids")
+  filters           Json?            @map("filters")
+  status            BulkActionStatus @default(PENDING)
+  impactLevel       ImpactLevel      @default(MEDIUM)
+  totalTargets      Int              @default(0) @map("total_targets")
+  processedTargets  Int              @default(0) @map("processed_targets")
+  successCount      Int              @default(0) @map("success_count")
+  failureCount      Int              @default(0) @map("failure_count")
+  skipCount         Int              @default(0) @map("skip_count")
+  results           Json?            @map("results")
+  errorMessages     Json?            @map("error_messages")
+  scheduledAt       DateTime?        @map("scheduled_at")
+  startedAt         DateTime?        @map("started_at")
+  completedAt       DateTime?        @map("completed_at")
+  createdBy         String           @map("created_by")
+  executedBy        String?          @map("executed_by")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+
+  // Relations
+  creator           User             @relation("BulkActionCreator", fields: [createdBy], references: [id])
+  executor          User?            @relation("BulkActionExecutor", fields: [executedBy], references: [id])
+  actionResults     BulkActionResult[] @relation("BulkActionResults")
+
+  @@map("bulk_actions")
+  @@index([actionType])
+  @@index([entityType])
+  @@index([status])
+  @@index([createdBy])
+  @@index([createdAt])
+  @@index([scheduledAt])
+}
+
+// Bulk Action Results Table
+model BulkActionResult {
+  id            String       @id @default(uuid())
+  bulkActionId  String       @map("bulk_action_id")
+  entityId      String       @map("entity_id")
+  entityType    String       @map("entity_type")
+  action        String
+  result        ActionResult  @default(SUCCESS)
+  oldValues     Json?        @map("old_values")
+  newValues     Json?        @map("new_values")
+  errorMessage  String?      @map("error_message")
+  processingTime Int?        @map("processing_time_ms")
+  processedAt   DateTime?    @map("processed_at")
+  createdAt     DateTime     @default(now()) @map("created_at")
+
+  // Relations
+  bulkAction    BulkAction   @relation("BulkActionResults", fields: [bulkActionId], references: [id], onDelete: Cascade)
+
+  @@map("bulk_action_results")
+  @@index([bulkActionId])
+  @@index([entityId])
+  @@index([entityType])
+  @@index([result])
+  @@index([processedAt])
+}
