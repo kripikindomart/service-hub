@@ -1044,13 +1044,14 @@ export default function UsersPage() {
                             >
                               <PencilIcon className="w-4 h-4 text-gray-600" />
                             </Button>
-                            {userItem.status === 'PENDING' ? (
+                            {(userItem.status === 'PENDING' || userItem.status === 'INACTIVE') ? (
                               <Button
                                 variant="ghost"
                                 size="sm"
                                 className="h-8 w-8 p-0 hover:bg-green-50"
                                 onClick={() => handleActivateUser(userItem.id)}
                                 disabled={userItem.id === user?.id}
+                                title={userItem.status === 'PENDING' ? 'Activate User' : 'Reactivate User'}
                               >
                                 <CheckCircleIcon className="w-4 h-4 text-green-600" />
                               </Button>
@@ -1061,6 +1062,7 @@ export default function UsersPage() {
                                 className="h-8 w-8 p-0 hover:bg-yellow-50"
                                 onClick={() => handleDeactivateUser(userItem.id)}
                                 disabled={userItem.id === user?.id}
+                                title="Deactivate User"
                               >
                                 <XCircleIcon className="w-4 h-4 text-yellow-600" />
                               </Button>
