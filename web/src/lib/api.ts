@@ -359,8 +359,14 @@ export const tenantApi = {
   },
 
   getTenantRoles: async (tenantId: string): Promise<ApiResponse<any[]>> => {
-    const response = await api.get(`/api/v1/tenants/${tenantId}/roles`)
-    return response.data
+    // Temporary fix: Use dashboard stats which includes roles data
+    const response = await api.get('/api/v1/tenants/dashboard/stats')
+    const dashboardData = response.data.data
+    return {
+      success: true,
+      message: 'Roles retrieved successfully',
+      data: dashboardData.roles || []
+    }
   },
 
   getDashboardStats: async (): Promise<ApiResponse<any>> => {

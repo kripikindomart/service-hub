@@ -119,6 +119,41 @@ export class TenantController {
     const primaryTenantId = primaryUserAssignment.tenantId;
 
     // Get basic statistics
+    // Get roles for primary tenant
+    const roles = await prisma.role.findMany({
+      where: {
+        tenantId: primaryTenantId,
+      },
+      orderBy: {
+        level: 'asc',
+      },
+    });
+
+    const rolesWithCount = await Promise.all(
+      roles.map(async (role) => {
+        const userCount = await prisma.userAssignment.count({
+          where: {
+            roleId: role.id,
+            status: 'ACTIVE',
+          },
+        });
+
+        return {
+          id: role.id,
+          name: role.name,
+          displayName: role.displayName,
+          description: role.description,
+          type: role.type,
+          level: role.level,
+          isSystemRole: role.isSystemRole,
+          isDefaultRole: role.isDefaultRole,
+          userCount,
+          createdAt: role.createdAt,
+          updatedAt: role.updatedAt,
+        };
+      })
+    );
+
     const dashboardData = {
       overview: {
         totalTenants: isSuperAdmin ? await prisma.tenant.count() : 1,
@@ -126,8 +161,125 @@ export class TenantController {
       },
       primaryTenant: primaryUserAssignment.tenant,
       userRole: primaryUserAssignment.role.displayName,
+      roles: rolesWithCount, // Add roles to dashboard response
     };
 
     res.json(ResponseUtil.success('Dashboard statistics retrieved successfully', dashboardData));
+  });
+
+  // Get tenant roles
+  getTenantRoles = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const { tenantId } = req.params;
+    const userId = req.user!.id;
+
+    if (!tenantId) {
+      throw new AppError('Tenant ID is required', 400);
+    }
+
+    // Check if user has access to this tenant
+    const userAssignment = await prisma.userAssignment.findFirst({
+      where: {
+        userId: userId,
+        tenantId: tenantId,
+        status: 'ACTIVE',
+      },
+    });
+
+    if (!userAssignment) {
+      throw new AppError('Access denied to this tenant', 403);
+    }
+
+    // Get all roles for this tenant with user count
+    const roles = await prisma.role.findMany({
+      where: {
+        tenantId: { equals: tenantId },
+      },
+      orderBy: {
+        level: 'asc',
+      },
+    });
+
+    // Get user count for each role
+    const rolesWithCount = await Promise.all(
+      roles.map(async (role) => {
+        const userCount = await prisma.userAssignment.count({
+          where: {
+            roleId: role.id,
+            status: 'ACTIVE',
+          },
+        });
+
+        return {
+          id: role.id,
+          name: role.name,
+          displayName: role.displayName,
+          description: role.description,
+          type: role.type,
+          level: role.level,
+          isSystemRole: role.isSystemRole,
+          isDefaultRole: role.isDefaultRole,
+          userCount,
+          createdAt: role.createdAt,
+          updatedAt: role.updatedAt,
+        };
+      })
+    );
+
+    res.json(ResponseUtil.success('Tenant roles retrieved successfully', rolesWithCount));
+  });
+
+  // Get roles for current tenant (for debugging)
+  getCurrentTenantRoles = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.user!.id;
+
+    // Get user's primary tenant
+    const primaryUserAssignment = await prisma.userAssignment.findFirst({
+      where: { userId, isPrimary: true, deletedAt: null },
+      include: { tenant: true },
+    });
+
+    if (!primaryUserAssignment) {
+      throw new AppError('No primary tenant found', 404);
+    }
+
+    const tenantId = primaryUserAssignment.tenantId;
+
+    // Get all roles for this tenant with user count
+    const roles = await prisma.role.findMany({
+      where: {
+        tenantId: { equals: tenantId },
+      },
+      orderBy: {
+        level: 'asc',
+      },
+    });
+
+    // Get user count for each role
+    const rolesWithCount = await Promise.all(
+      roles.map(async (role) => {
+        const userCount = await prisma.userAssignment.count({
+          where: {
+            roleId: role.id,
+            status: 'ACTIVE',
+          },
+        });
+
+        return {
+          id: role.id,
+          name: role.name,
+          displayName: role.displayName,
+          description: role.description,
+          type: role.type,
+          level: role.level,
+          isSystemRole: role.isSystemRole,
+          isDefaultRole: role.isDefaultRole,
+          userCount,
+          createdAt: role.createdAt,
+          updatedAt: role.updatedAt,
+        };
+      })
+    );
+
+    res.json(ResponseUtil.success('Current tenant roles retrieved successfully', rolesWithCount));
   });
 }
