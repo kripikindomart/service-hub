@@ -67,7 +67,7 @@ export class AuthController {
       where: { email },
       include: {
         homeTenant: true,
-        userTenants: {
+        userAssignments: {
           include: {
             tenant: true,
             role: true,
@@ -92,14 +92,14 @@ export class AuthController {
     }
 
     // Filter accessible tenants
-    const accessibleTenants = user.userTenants
-      .filter(ut => ut.tenant.status === 'ACTIVE' && ut.status === 'ACTIVE')
-      .map(ut => ({
-        id: ut.tenant.id,
-        name: ut.tenant.name,
-        slug: ut.tenant.slug,
-        role: ut.role.displayName,
-        isPrimary: ut.isPrimary,
+    const accessibleTenants = user.userAssignments
+      .filter(ua => ua.tenant.status === 'ACTIVE' && ua.status === 'ACTIVE')
+      .map(ua => ({
+        id: ua.tenant.id,
+        name: ua.tenant.name,
+        slug: ua.tenant.slug,
+        role: ua.role.displayName,
+        isPrimary: ua.isPrimary,
       }));
 
     // Set current tenant
@@ -137,6 +137,12 @@ export class AuthController {
           name: user.name,
           avatarUrl: user.avatarUrl,
           emailVerified: user.emailVerified,
+          homeTenant: user.homeTenant ? {
+            id: user.homeTenant.id,
+            name: user.homeTenant.name,
+            slug: user.homeTenant.slug,
+            type: user.homeTenant.type,
+          } : null,
         },
         currentTenant,
         tenants: accessibleTenants,

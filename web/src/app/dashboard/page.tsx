@@ -87,9 +87,9 @@ export default function DashboardPage() {
 
           setStats({
             totalUsers: overview.totalUsers,
-            activeUsers: userStats?.byStatus?.find(s => s.status === 'ACTIVE')?.count || 0,
-            pendingUsers: userStats?.byStatus?.find(s => s.status === 'PENDING')?.count || 0,
-            inactiveUsers: userStats?.byStatus?.find(s => s.status === 'INACTIVE')?.count || 0,
+            activeUsers: userStats?.byStatus?.find((s: any) => s.status === 'ACTIVE')?.count || 0,
+            pendingUsers: userStats?.byStatus?.find((s: any) => s.status === 'PENDING')?.count || 0,
+            inactiveUsers: userStats?.byStatus?.find((s: any) => s.status === 'INACTIVE')?.count || 0,
             totalTenants: overview.totalTenants,
             activeTenants: overview.totalTenants, // All tenants are active based on our filter
             totalPermissions: overview.totalRoles,

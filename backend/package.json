@@ -12,7 +12,8 @@
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
-    "db:seed": "ts-node prisma/seed.ts"
+    "db:seed": "ts-node prisma/seed.ts",
+    "migrate-user-tenant": "ts-node scripts/migrate_user_tenant_to_assignment.ts"
   },
   "keywords": [],
   "author": "",
@@ -21,7 +22,6 @@
   "dependencies": {
     "@prisma/client": "^6.18.0",
     "@types/express": "^5.0.5",
-    "@types/node": "^24.9.2",
     "bcryptjs": "^3.0.2",
     "bull": "^4.16.5",
     "cors": "^2.8.5",
@@ -42,6 +42,7 @@
     "@types/cors": "^2.8.19",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/morgan": "^1.9.10",
+    "@types/node": "^24.9.2",
     "@types/uuid": "^10.0.0",
     "eslint": "^9.38.0",
     "nodemon": "^3.1.10",

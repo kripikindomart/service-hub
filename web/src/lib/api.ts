@@ -3,6 +3,108 @@ import { ApiResponse, PaginatedResponse, AuthResponse, LoginRequest, RegisterReq
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'
 
+// Token management utilities
+const getTokenExpiration = (token: string): number | null => {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]))
+    return payload.exp ? payload.exp * 1000 : null // Convert to milliseconds
+  } catch (error) {
+    console.error('Error parsing token:', error)
+    return null
+  }
+}
+
+const isTokenExpired = (token: string): boolean => {
+  const expiration = getTokenExpiration(token)
+  if (!expiration) return false
+  return Date.now() >= expiration
+}
+
+const isTokenExpiringSoon = (token: string, bufferMinutes: number = 5): boolean => {
+  const expiration = getTokenExpiration(token)
+  if (!expiration) return false
+  const bufferMs = bufferMinutes * 60 * 1000
+  return Date.now() >= (expiration - bufferMs)
+}
+
+// Enhanced logout function
+const performLogout = (reason: string = 'Session expired') => {
+  console.log(`Logging out: ${reason}`)
+
+  // Clear all auth-related storage
+  localStorage.removeItem('accessToken')
+  localStorage.removeItem('refreshToken')
+  localStorage.removeItem('user')
+  localStorage.removeItem('currentTenant')
+
+  // Clear any session storage
+  sessionStorage.clear()
+
+  // Redirect to login with a message
+  const currentUrl = window.location.pathname
+  if (currentUrl !== '/login') {
+    const params = new URLSearchParams()
+    params.append('reason', reason)
+    params.append('redirect', currentUrl)
+    window.location.href = `/login?${params.toString()}`
+  }
+}
+
+// Token refresh monitoring
+let refreshInProgress = false
+let refreshPromise: Promise<string> | null = null
+
+const refreshTokenIfNeeded = async (): Promise<string | null> => {
+  const token = localStorage.getItem('accessToken')
+  const refreshToken = localStorage.getItem('refreshToken')
+
+  if (!token || !refreshToken) {
+    return null
+  }
+
+  // If token is not expiring soon, return current token
+  if (!isTokenExpiringSoon(token)) {
+    return token
+  }
+
+  // If refresh is already in progress, wait for it
+  if (refreshInProgress && refreshPromise) {
+    try {
+      return await refreshPromise
+    } catch (error) {
+      return null
+    }
+  }
+
+  // Start refresh process
+  refreshInProgress = true
+  refreshPromise = new Promise<string>(async (resolve, reject) => {
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/v1/auth/refresh`, {
+        refreshToken,
+      })
+
+      const { accessToken } = response.data.data
+      localStorage.setItem('accessToken', accessToken)
+
+      resolve(accessToken)
+    } catch (error) {
+      console.error('Token refresh failed:', error)
+      reject(error)
+    } finally {
+      refreshInProgress = false
+      refreshPromise = null
+    }
+  })
+
+  try {
+    return await refreshPromise
+  } catch (error) {
+    performLogout('Session expired - please login again')
+    return null
+  }
+}
+
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
@@ -10,53 +112,136 @@ const api = axios.create({
   },
 })
 
-// Request interceptor to add auth token
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('accessToken')
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
+// Request interceptor to add auth token and check expiration
+api.interceptors.request.use(async (config) => {
+  // Skip token check for auth endpoints
+  const isAuthEndpoint = config.url?.includes('/api/v1/auth/login') ||
+                        config.url?.includes('/api/v1/auth/register') ||
+                        config.url?.includes('/api/v1/auth/refresh')
+
+  if (!isAuthEndpoint) {
+    const token = await refreshTokenIfNeeded()
+
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
+    } else {
+      // No valid token available, cancel the request
+      return Promise.reject({
+        config,
+        message: 'No valid authentication token available',
+        isAuthenticationError: true
+      })
+    }
   }
+
+  // Add request timestamp for monitoring
+  config.metadata = { ...config.metadata, startTime: Date.now() }
+
   return config
 })
 
-// Response interceptor to handle token refresh
+// Response interceptor to handle token refresh and errors
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // Log successful requests for debugging
+    const duration = Date.now() - response.config.metadata?.startTime
+    if (duration > 5000) { // Log slow requests
+      console.log(`Slow API request: ${response.config.method?.toUpperCase()} ${response.config.url} took ${duration}ms`)
+    }
+    return response
+  },
   async (error) => {
     const originalRequest = error.config
 
-    if (error.response?.status === 401 && !originalRequest._retry) {
-      originalRequest._retry = true
+    // Handle authentication errors
+    if (error.isAuthenticationError || error.response?.status === 401) {
+      if (!originalRequest._retry) {
+        originalRequest._retry = true
 
-      try {
-        const refreshToken = localStorage.getItem('refreshToken')
-        if (refreshToken) {
-          const response = await axios.post(`${API_BASE_URL}/api/v1/auth/refresh`, {
-            refreshToken,
-          })
-
-          const { accessToken } = response.data.data
-          localStorage.setItem('accessToken', accessToken)
-
-          originalRequest.headers.Authorization = `Bearer ${accessToken}`
-          return api(originalRequest)
+        try {
+          const newToken = await refreshTokenIfNeeded()
+          if (newToken) {
+            originalRequest.headers.Authorization = `Bearer ${newToken}`
+            return api(originalRequest)
+          }
+        } catch (refreshError) {
+          performLogout('Authentication failed - please login again')
+          return Promise.reject(refreshError)
         }
-      } catch (refreshError) {
-        // Refresh token failed, logout user
-        localStorage.removeItem('accessToken')
-        localStorage.removeItem('refreshToken')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
+      } else {
+        // Already retried once, logout
+        performLogout('Session expired - please login again')
       }
+    }
+
+    // Handle network errors
+    if (!error.response && error.code === 'NETWORK_ERROR') {
+      console.error('Network error - please check your connection')
+    }
+
+    // Handle server errors
+    if (error.response?.status >= 500) {
+      console.error('Server error - please try again later')
     }
 
     return Promise.reject(error)
   }
 )
 
+// Set up periodic token check
+let tokenCheckInterval: NodeJS.Timeout | null = null
+
+const startTokenMonitoring = () => {
+  if (tokenCheckInterval) {
+    clearInterval(tokenCheckInterval)
+  }
+
+  tokenCheckInterval = setInterval(async () => {
+    const token = localStorage.getItem('accessToken')
+    const refreshToken = localStorage.getItem('refreshToken')
+
+    if (token && refreshToken) {
+      if (isTokenExpired(token)) {
+        performLogout('Session expired - please login again')
+      } else if (isTokenExpiringSoon(token, 2)) { // 2-minute warning
+        console.warn('Session expiring soon - will refresh automatically')
+        await refreshTokenIfNeeded()
+      }
+    }
+  }, 30000) // Check every 30 seconds
+}
+
+// Start monitoring if we're in a browser environment
+if (typeof window !== 'undefined') {
+  startTokenMonitoring()
+
+  // Handle page visibility changes
+  document.addEventListener('visibilitychange', async () => {
+    if (!document.hidden) {
+      // Page became visible, check token status
+      const token = localStorage.getItem('accessToken')
+      if (token && isTokenExpired(token)) {
+        performLogout('Session expired while you were away')
+      } else if (token && isTokenExpiringSoon(token, 1)) { // 1-minute buffer when returning
+        await refreshTokenIfNeeded()
+      }
+    }
+  })
+
+  // Handle browser tab/window close
+  window.addEventListener('beforeunload', () => {
+    if (tokenCheckInterval) {
+      clearInterval(tokenCheckInterval)
+    }
+  })
+}
+
 export const authApi = {
   login: async (data: LoginRequest): Promise<ApiResponse<any>> => {
+    console.log('authApi.login called with:', data)
+    console.log('API base URL:', process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000')
     const response = await api.post('/api/v1/auth/login', data)
+    console.log('API response:', response.data)
     return response.data
   },
 
@@ -256,8 +441,48 @@ export const adminApi = {
     return response.data
   },
 
-  deleteUser: async (userId: string): Promise<ApiResponse<void>> => {
-    const response = await api.delete(`/api/v1/admin/users/${userId}`)
+  deleteUser: async (userId: string, reason?: string): Promise<ApiResponse<void>> => {
+    const response = await api.delete(`/api/v1/admin/users/${userId}`, { data: { reason } })
+    return response.data
+  },
+  restoreUser: async (userId: string): Promise<ApiResponse<void>> => {
+    const response = await api.post(`/api/v1/admin/users/${userId}/restore`)
+    return response.data
+  },
+  archiveUser: async (userId: string): Promise<ApiResponse<void>> => {
+    const response = await api.post(`/api/v1/admin/users/${userId}/archive`)
+    return response.data
+  },
+  unarchiveUser: async (userId: string): Promise<ApiResponse<void>> => {
+    const response = await api.post(`/api/v1/admin/users/${userId}/unarchive`)
+    return response.data
+  },
+  permanentDeleteUser: async (userId: string): Promise<ApiResponse<void>> => {
+    const response = await api.delete(`/api/v1/admin/users/${userId}/permanent`)
+    return response.data
+  },
+  getDeletedUsers: async (params?: {
+    page?: number
+    limit?: number
+    search?: string
+    dateFrom?: string
+    dateTo?: string
+    sortBy?: string
+    sortOrder?: 'asc' | 'desc'
+  }): Promise<ApiResponse<any[]>> => {
+    const response = await api.get('/api/v1/admin/users/deleted', { params })
+    return response.data
+  },
+  getArchivedUsers: async (params?: {
+    page?: number
+    limit?: number
+    search?: string
+    dateFrom?: string
+    dateTo?: string
+    sortBy?: string
+    sortOrder?: 'asc' | 'desc'
+  }): Promise<ApiResponse<any[]>> => {
+    const response = await api.get('/api/v1/admin/users/archived', { params })
     return response.data
   },
 

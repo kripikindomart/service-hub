@@ -127,7 +127,7 @@ export class UserController {
   getUserTenants = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.user!.id;
 
-    const userTenants = await prisma.userTenant.findMany({
+    const userAssignments = await prisma.userAssignment.findMany({
       where: { userId },
       include: {
         tenant: {
@@ -153,19 +153,19 @@ export class UserController {
       orderBy: { isPrimary: 'desc' },
     });
 
-    const tenants = userTenants
-      .filter(ut => ut.tenant.status === 'ACTIVE' && ut.status === 'ACTIVE')
-      .map(ut => ({
-        id: ut.tenant.id,
-        name: ut.tenant.name,
-        slug: ut.tenant.slug,
-        type: ut.tenant.type,
-        role: ut.role.displayName,
-        level: ut.role.level,
-        isPrimary: ut.isPrimary,
+    const tenants = userAssignments
+      .filter(ua => ua.tenant.status === 'ACTIVE' && ua.status === 'ACTIVE')
+      .map(ua => ({
+        id: ua.tenant.id,
+        name: ua.tenant.name,
+        slug: ua.tenant.slug,
+        type: ua.tenant.type,
+        role: ua.role.displayName,
+        level: ua.role.level,
+        isPrimary: ua.isPrimary,
         branding: {
-          primaryColor: ut.tenant.primaryColor,
-          logoUrl: ut.tenant.logoUrl,
+          primaryColor: ua.tenant.primaryColor,
+          logoUrl: ua.tenant.logoUrl,
         },
       }));
 
@@ -178,12 +178,12 @@ export class UserController {
     const { tenantId } = req.body;
 
     // Verify user has access to this tenant
-    const userTenant = await prisma.userTenant.findUnique({
+    const userAssignment = await prisma.userAssignment.findFirst({
       where: {
-        userId_tenantId: {
-          userId,
-          tenantId,
-        },
+        userId,
+        tenantId,
+        deletedAt: null,
+        status: 'ACTIVE'
       },
       include: {
         tenant: {
@@ -197,7 +197,7 @@ export class UserController {
       },
     });
 
-    if (!userTenant || userTenant.tenant.status !== 'ACTIVE') {
+    if (!userAssignment || userAssignment.tenant.status !== 'ACTIVE') {
       throw new AppError('Tenant not found or not accessible', 404);
     }
 
@@ -207,6 +207,6 @@ export class UserController {
       data: { currentTenantId: tenantId },
     });
 
-    res.json(ResponseUtil.success('Tenant switched successfully', userTenant.tenant));
+    res.json(ResponseUtil.success('Tenant switched successfully', userAssignment.tenant));
   });
 }

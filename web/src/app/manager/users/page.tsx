@@ -30,6 +30,8 @@ import {
 } from '@heroicons/react/24/outline'
 import { TrendingUp, TrendingDown, Users, Activity } from 'lucide-react'
 
+type TabType = 'active' | 'deleted' | 'archived'
+
 export default function UsersPage() {
   const [user, setUser] = useState<User | null>(null)
   const [users, setUsers] = useState<User[]>([])
@@ -47,6 +49,9 @@ export default function UsersPage() {
   const [selectedEditUser, setSelectedEditUser] = useState<any>(null)
   const [userStats, setUserStats] = useState<any>(null)
   const [statsLoading, setStatsLoading] = useState(true)
+  const [activeTab, setActiveTab] = useState<TabType>('active')
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [deleteReason, setDeleteReason] = useState('')
   const router = useRouter()
 
   const fetchUsers = async (page = 1, search = '') => {
@@ -54,26 +59,45 @@ export default function UsersPage() {
       setLoading(true)
 
       // Check if current user is super admin
-      const currentUserRole = user?.userTenants?.find(ut => ut.isPrimary)?.role?.level
+      const currentUserRole = user?.userAssignments?.find(ut => ua.isPrimary)?.role?.level
       const isSuperAdmin = currentUserRole === 'SUPER_ADMIN'
 
       let response
-      if (isSuperAdmin) {
-        // Super admin can see all users
-        response = await adminApi.getUsers({
-          page,
-          limit: 10,
-          search: search || undefined
-        })
-      } else {
-        // Regular users can only see users from their tenant
-        const currentTenantId = user?.userTenants?.find(ut => ut.isPrimary)?.tenantId
-        response = await adminApi.getUsers({
-          page,
-          limit: 10,
-          search: search || undefined,
-          tenantId: currentTenantId
-        })
+      switch (activeTab) {
+        case 'deleted':
+          response = await adminApi.getDeletedUsers({
+            page,
+            limit: 10,
+            search: search || undefined
+          })
+          break
+        case 'archived':
+          response = await adminApi.getArchivedUsers({
+            page,
+            limit: 10,
+            search: search || undefined
+          })
+          break
+        case 'active':
+        default:
+          if (isSuperAdmin) {
+            // Super admin can see all users
+            response = await adminApi.getUsers({
+              page,
+              limit: 10,
+              search: search || undefined
+            })
+          } else {
+            // Regular users can only see users from their tenant
+            const currentTenantId = user?.userAssignments?.find(ut => ua.isPrimary)?.tenantId
+            response = await adminApi.getUsers({
+              page,
+              limit: 10,
+              search: search || undefined,
+              tenantId: currentTenantId
+            })
+          }
+          break
       }
 
       if (response.success) {
@@ -288,6 +312,163 @@ export default function UsersPage() {
     }
   }
 
+  // Duplicate user handler
+  const handleDuplicateUser = async (userToDuplicate: any) => {
+    // Check if user has tenants and roles
+    const hasValidTenants = userToDuplicate.userAssignments && userToDuplicate.userAssignments.length > 0
+    const hasValidRoles = hasValidTenants && userToDuplicate.userAssignments.some((ut: any) => ua.roleId)
+
+    if (!hasValidTenants || !hasValidRoles) {
+      await Swal.fire({
+        icon: 'warning',
+        title: 'Cannot Duplicate User',
+        html: `
+          <div class="text-left">
+            <p>This user cannot be duplicated because:</p>
+            <ul class="text-sm text-gray-600 ml-4 mt-2">
+              ${!hasValidTenants ? '<li>• User has no tenant assignments</li>' : ''}
+              ${!hasValidRoles ? '<li>• User has no role assignments</li>' : ''}
+            </ul>
+            <p class="text-sm text-gray-600 mt-3">Please assign tenant and role to this user first.</p>
+          </div>
+        `,
+        confirmButtonColor: '#6b7280',
+      })
+      return
+    }
+
+    const result = await Swal.fire({
+      title: 'Duplicate User?',
+      html: `
+        <p>Are you sure you want to duplicate this user?</p>
+        <div class="text-left mt-4">
+          <p><strong>Name:</strong> ${userToDuplicate.name}</p>
+          <p><strong>Email:</strong> ${userToDuplicate.email}</p>
+          <p class="text-sm text-gray-600 mt-2">A new user will be created with:</p>
+          <ul class="text-sm text-gray-600 ml-4">
+            <li>• Same name with " (Copy)" suffix</li>
+            <li>• New email address (you'll need to provide)</li>
+            <li>• Same tenant and role assignments</li>
+            <li>• Same settings and preferences</li>
+          </ul>
+        </div>
+      `,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonColor: '#8b5cf6',
+      cancelButtonColor: '#6b7280',
+      confirmButtonText: 'Yes, duplicate!',
+      cancelButtonText: 'Cancel'
+    })
+
+    if (!result.isConfirmed) {
+      return
+    }
+
+    // Open modal for entering new email
+    const { value: newEmail } = await Swal.fire({
+      title: 'Enter New Email',
+      html: `
+        <p>Please provide a unique email address for the duplicated user:</p>
+        <input id="new-email" class="swal2-input" placeholder="user-copy@example.com" value="${userToDuplicate.email.replace('@', '-copy@')}">
+      `,
+      input: 'email',
+      inputPlaceholder: 'user-copy@example.com',
+      inputValue: `${userToDuplicate.email.replace('@', '-copy@')}`,
+      showCancelButton: true,
+      confirmButtonText: 'Create Duplicate',
+      cancelButtonText: 'Cancel',
+      preConfirm: (email) => {
+        if (!email) {
+          Swal.showValidationMessage('Email is required')
+          return false
+        }
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          Swal.showValidationMessage('Please enter a valid email address')
+          return false
+        }
+        return email
+      }
+    })
+
+    if (newEmail) {
+      try {
+        // Get the primary tenant and role from the user being duplicated
+        const primaryUserTenant = userToDuplicate.userAssignments?.find((ut: any) => ua.isPrimary)
+        const tenantId = primaryUserTenant?.tenantId || userToDuplicate.userAssignments?.[0]?.tenantId
+        const roleId = primaryUserTenant?.roleId || userToDuplicate.userAssignments?.[0]?.roleId
+
+        // Additional validation
+        if (!tenantId || !roleId) {
+          throw new Error('Cannot determine tenant and role for duplication')
+        }
+
+        // Call API to create duplicated user
+        const response = await adminApi.createUser({
+          name: `${userToDuplicate.name} (Copy)`,
+          email: newEmail,
+          phone: userToDuplicate.phone || undefined,
+          timezone: userToDuplicate.timezone || 'UTC',
+          language: userToDuplicate.language || 'en',
+          status: 'PENDING', // Always start as PENDING for duplicated users
+          tenantId,
+          roleId,
+          sendEmailInvite: true // Send invitation to new user
+        })
+
+        if (response.success) {
+          toast.success('User duplicated successfully! Invitation email sent.')
+
+          // Refresh data
+          await fetchUsers(currentPage, searchTerm)
+          await fetchUserStats()
+
+          // Show success details
+          await Swal.fire({
+            icon: 'success',
+            title: 'User Duplicated Successfully!',
+            html: `
+              <div class="text-left">
+                <p><strong>New User:</strong> ${userToDuplicate.name} (Copy)</p>
+                <p><strong>Email:</strong> ${newEmail}</p>
+                <p class="text-sm text-gray-600 mt-2">The new user has been created with PENDING status and will receive an invitation email.</p>
+              </div>
+            `,
+            confirmButtonColor: '#10b981',
+          })
+        } else {
+          throw new Error(response.message || 'Failed to duplicate user')
+        }
+
+      } catch (error: any) {
+        console.error('Duplicate user error:', error)
+
+        let errorMessage = 'Failed to duplicate user'
+        if (error.response?.data?.message) {
+          const message = error.response.data.message.toLowerCase()
+          if (message.includes('email already exists')) {
+            errorMessage = 'A user with this email address already exists'
+          } else if (message.includes('tenant')) {
+            errorMessage = 'Unable to assign user to the specified tenant'
+          } else if (message.includes('role')) {
+            errorMessage = 'Unable to assign role to the new user'
+          } else {
+            errorMessage = error.response.data.message
+          }
+        } else if (error.message) {
+          errorMessage = error.message
+        }
+
+        await Swal.fire({
+          icon: 'error',
+          title: 'Duplication Failed',
+          text: errorMessage,
+          confirmButtonColor: '#ef4444',
+        })
+      }
+    }
+  }
+
   // Export handlers
   const handleExport = async (format: 'json' | 'csv') => {
     try {
@@ -423,10 +604,19 @@ export default function UsersPage() {
   }
 
   // Edit user handlers
-  const handleEditUser = (userItem: any) => {
+  const handleEditUser = async (userItem: any) => {
     setSelectedEditUser(userItem)
-    const primaryTenantId = userItem.userTenants?.find((ut: any) => ut.isPrimary)?.tenantId || ''
 
+    // Use home tenant as default, fallback to primary tenant if home tenant is not set
+    const defaultTenantId = userItem.homeTenantId || userItem.userAssignments?.find((ut: any) => ua.isPrimary)?.tenantId || ''
+    const defaultRoleId = userItem.userAssignments?.find((ut: any) => ua.tenantId === defaultTenantId)?.roleId || ''
+
+    // First fetch roles for the user's home/primary tenant
+    if (defaultTenantId) {
+      await fetchEditRolesForTenant(defaultTenantId)
+    }
+
+    // Then set the form data (this ensures roles are loaded before setting roleId)
     setEditUserForm({
       name: userItem.name,
       email: userItem.email,
@@ -434,14 +624,9 @@ export default function UsersPage() {
       timezone: userItem.timezone || 'UTC',
       language: userItem.language || 'en',
       status: userItem.status,
-      tenantId: primaryTenantId,
-      roleId: userItem.userTenants?.find((ut: any) => ut.isPrimary)?.roleId || ''
+      tenantId: defaultTenantId,
+      roleId: defaultRoleId
     })
-
-    // Fetch roles for the user's tenant
-    if (primaryTenantId) {
-      fetchEditRolesForTenant(primaryTenantId)
-    }
 
     setShowEditUser(true)
   }
@@ -479,6 +664,29 @@ export default function UsersPage() {
       roleId: '' // Reset role when tenant changes
     })
     fetchEditRolesForTenant(tenantId)
+
+    // Clear error for tenant and role fields
+    if (editUserErrors.tenantId || editUserErrors.roleId) {
+      setEditUserErrors(prev => {
+        const newErrors = { ...prev }
+        delete newErrors.tenantId
+        delete newErrors.roleId
+        return newErrors
+      })
+    }
+  }
+
+  // Handle edit form field changes with error clearing
+  const handleEditUserFieldChange = (field: string, value: any) => {
+    setEditUserForm(prev => ({ ...prev, [field]: value }))
+    // Clear error for this field if it exists
+    if (editUserErrors[field]) {
+      setEditUserErrors(prev => {
+        const newErrors = { ...prev }
+        delete newErrors[field]
+        return newErrors
+      })
+    }
   }
 
   // Edit user form state
@@ -579,18 +787,6 @@ export default function UsersPage() {
     }
   }
 
-  const handleEditUserFieldChange = (field: string, value: any) => {
-    setEditUserForm(prev => ({ ...prev, [field]: value }))
-    // Clear error for this field if it exists
-    if (editUserErrors[field]) {
-      setEditUserErrors(prev => {
-        const newErrors = { ...prev }
-        delete newErrors[field]
-        return newErrors
-      })
-    }
-  }
-
   // Form submission handlers
   const handleAddUserSubmit = async () => {
     if (!validateAddUserForm()) {
@@ -639,7 +835,45 @@ export default function UsersPage() {
 
     } catch (error: any) {
       console.error('Create user error:', error)
-      toast.error(error.response?.data?.message || error.message || 'Failed to create user')
+
+      // Parse different error response formats
+      let errorMessage = 'Failed to create user'
+      let fieldErrors: any = {}
+
+      if (error.response?.data) {
+        const errorData = error.response.data
+
+        // Handle structured error responses
+        if (errorData.errors && typeof errorData.errors === 'object') {
+          // If backend returns field-specific errors
+          fieldErrors = errorData.errors
+        } else if (errorData.message) {
+          // Handle specific error messages
+          const message = errorData.message.toLowerCase()
+
+          if (message.includes('email already exists') || message.includes('duplicate email')) {
+            fieldErrors.email = 'A user with this email address already exists'
+          } else if (message.includes('phone already exists')) {
+            fieldErrors.phone = 'A user with this phone number already exists'
+          } else if (message.includes('tenant')) {
+            fieldErrors.tenantId = errorData.message
+          } else if (message.includes('role')) {
+            fieldErrors.roleId = errorData.message
+          } else {
+            errorMessage = errorData.message
+          }
+        }
+      } else if (error.message) {
+        errorMessage = error.message
+      }
+
+      // Update form errors if field-specific errors exist
+      if (Object.keys(fieldErrors).length > 0) {
+        setAddUserErrors(prevErrors => ({ ...prevErrors, ...fieldErrors }))
+      }
+
+      // Show general error message
+      toast.error(errorMessage)
     } finally {
       setAddUserLoading(false)
     }
@@ -716,7 +950,7 @@ export default function UsersPage() {
       case 'PENDING':
         return <ClockIcon className="w-5 h-5 text-yellow-500" />
       case 'INACTIVE':
-        return <XCircleIcon className="w-5 h-5 text-red-500" />
+        return <XMarkIcon className="w-5 h-5 text-red-500" />
       default:
         return null
     }
@@ -726,13 +960,13 @@ export default function UsersPage() {
     <DashboardLayout>
       <div className="space-y-6">
         {/* Header */}
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg border border-white/20">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-black text-gradient mb-2">User Management</h1>
-              <p className="text-gray-600 text-lg">Manage platform users and permissions</p>
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-4 sm:p-6 shadow-lg border border-white/20">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="min-w-0 flex-1">
+              <h1 className="text-2xl sm:text-3xl font-black text-gradient mb-2 break-words">User Management</h1>
+              <p className="text-gray-600 text-sm sm:text-lg">Manage platform users and permissions</p>
             </div>
-            <Button className="btn-gradient" onClick={handleAddUser}>
+            <Button className="btn-gradient w-full sm:w-auto" onClick={handleAddUser}>
               <PlusIcon className="w-4 h-4 mr-2" />
               Add User
             </Button>
@@ -831,18 +1065,18 @@ export default function UsersPage() {
 
         {/* Search and Filters */}
         <Card className="border-0 shadow-lg">
-          <CardContent className="p-6">
-            <div className="flex flex-col sm:flex-row gap-4">
-              <div className="flex-1 relative">
+          <CardContent className="p-4 sm:p-6">
+            <div className="flex flex-col gap-4">
+              <div className="relative">
                 <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
                 <Input
                   placeholder="Search users by name, email, or role..."
                   value={searchTerm}
                   onChange={(e) => handleSearch(e.target.value)}
-                  className="pl-10 h-12 border-gray-200 focus:border-primary"
+                  className="pl-10 h-12 border-gray-200 focus:border-primary w-full"
                 />
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Button variant="outline" className="h-12">
                   Filter
                 </Button>
@@ -944,11 +1178,12 @@ export default function UsersPage() {
                 <span className="ml-3 text-gray-600">Loading users...</span>
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
+              <div className="overflow-x-auto overflow-y-auto max-h-[70vh] min-w-[320px]">
+                <table className="w-full min-w-[800px]">
+                  <thead className="sticky top-0 bg-white z-10">
                     <tr className="border-b border-gray-200">
-                      <th className="text-left py-3 px-4 font-semibold text-gray-700 w-12">
+                      <th className="text-left py-3 px-2 sm:px-4 font-semibold text-gray-700 w-8">No</th>
+                      <th className="text-left py-3 px-2 sm:px-4 font-semibold text-gray-700 w-12">
                         <input
                           type="checkbox"
                           checked={selectedUsers.length === users.length && users.length > 0}
@@ -956,19 +1191,23 @@ export default function UsersPage() {
                           className="w-4 h-4 text-primary border-gray-300 rounded focus:ring-primary"
                         />
                       </th>
-                      <th className="text-left py-3 px-4 font-semibold text-gray-700">User</th>
-                      <th className="text-left py-3 px-4 font-semibold text-gray-700">Tenant</th>
-                      <th className="text-left py-3 px-4 font-semibold text-gray-700">Status</th>
-                      <th className="text-left py-3 px-4 font-semibold text-gray-700">Email Verified</th>
-                      <th className="text-left py-3 px-4 font-semibold text-gray-700">Created</th>
-                      <th className="text-left py-3 px-4 font-semibold text-gray-700">Last Login</th>
-                      <th className="text-center py-3 px-4 font-semibold text-gray-700">Actions</th>
+                      <th className="text-left py-3 px-2 sm:px-4 font-semibold text-gray-700 hidden sm:table-cell">User</th>
+                      <th className="text-left py-3 px-2 sm:px-4 font-semibold text-gray-700">Tenant</th>
+                      <th className="text-left py-3 px-2 sm:px-4 font-semibold text-gray-700">Role</th>
+                      <th className="text-left py-3 px-2 sm:px-4 font-semibold text-gray-700 hidden lg:table-cell">Status</th>
+                      <th className="text-left py-3 px-2 sm:px-4 font-semibold text-gray-700 hidden md:table-cell">Email</th>
+                      <th className="text-center py-3 px-2 sm:px-4 font-semibold text-gray-700">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {displayUsers.map((userItem) => (
+                    {displayUsers.map((userItem, index) => (
                       <tr key={userItem.id} className={`border-b border-gray-100 hover:bg-gray-50 transition-colors ${selectedUsers.includes(userItem.id) ? 'bg-blue-50' : ''}`}>
-                        <td className="py-4 px-4">
+                        {/* Nomor Urut */}
+                        <td className="py-3 px-2 sm:px-4 text-sm text-gray-600 font-medium">
+                          {((currentPage - 1) * 10) + index + 1}
+                        </td>
+                        {/* Checkbox */}
+                        <td className="py-3 px-2 sm:px-4">
                           <input
                             type="checkbox"
                             checked={selectedUsers.includes(userItem.id)}
@@ -976,63 +1215,88 @@ export default function UsersPage() {
                             className="w-4 h-4 text-primary border-gray-300 rounded focus:ring-primary"
                           />
                         </td>
-                        <td className="py-4 px-4">
+                        {/* User Info - Desktop */}
+                        <td className="py-3 px-2 sm:px-4 hidden sm:table-cell">
                           <div>
-                            <div className="font-semibold text-gray-900">{userItem.name}</div>
-                            <div className="text-sm text-gray-500">{userItem.email}</div>
+                            <div className="font-semibold text-gray-900 text-sm truncate max-w-[200px]">{userItem.name}</div>
+                            <div className="text-xs text-gray-500 truncate max-w-[200px]">{userItem.email}</div>
                           </div>
                         </td>
-                        <td className="py-4 px-4">
-                          {userItem.userTenants && userItem.userTenants.length > 0 ? (
+                        {/* Tenant */}
+                        <td className="py-3 px-2 sm:px-4">
+                          {userItem.userAssignments && userItem.userAssignments.length > 0 ? (
                             <div className="space-y-1">
-                              {userItem.userTenants.map((ut, index) => (
-                                <div key={index} className="flex items-center space-x-2">
+                              {userItem.userAssignments.map((ua, index) => (
+                                <div key={index} className="flex items-center space-x-1">
                                   <Badge
                                     className={`${
-                                      ut.tenant.type === 'CORE' ? 'bg-purple-100 text-purple-800' :
-                                      ut.tenant.type === 'BUSINESS' ? 'bg-blue-100 text-blue-800' :
+                                      ua.tenant.type === 'CORE' ? 'bg-purple-100 text-purple-800' :
+                                      ua.tenant.type === 'BUSINESS' ? 'bg-blue-100 text-blue-800' :
                                       'bg-green-100 text-green-800'
                                     } text-xs`}
                                   >
-                                    {ut.tenant.type}
+                                    {ua.tenant.type}
                                   </Badge>
-                                  <span className="text-sm text-gray-600">
-                                    {ut.tenant.name}
+                                  <span className="text-xs text-gray-600 truncate max-w-[100px] font-medium">
+                                    {ua.tenant.name}
                                   </span>
-                                  {ut.isPrimary && (
+                                  {ua.isPrimary && (
                                     <Badge className="bg-yellow-100 text-yellow-800 text-xs">Primary</Badge>
                                   )}
                                 </div>
                               ))}
                             </div>
                           ) : (
-                            <span className="text-sm text-gray-500">No tenant</span>
+                            <span className="text-xs text-gray-500">No tenant</span>
                           )}
                         </td>
-                        <td className="py-4 px-4">
+                        {/* Role */}
+                        <td className="py-3 px-2 sm:px-4">
+                          {userItem.userAssignments && userItem.userAssignments.length > 0 ? (
+                            <div className="space-y-1">
+                              {userItem.userAssignments.map((ua, index) => (
+                                <div key={index} className="flex items-center space-x-1">
+                                  <ShieldCheckIcon className="w-3 h-3 text-gray-400" />
+                                  <Badge className="bg-gray-100 text-gray-700 text-xs">
+                                    {ua.role?.displayName || ua.role?.name}
+                                  </Badge>
+                                  <Badge className="bg-blue-50 text-blue-700 text-xs">
+                                    {ua.role?.level}
+                                  </Badge>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-xs text-gray-500">No role</span>
+                          )}
+                        </td>
+                        {/* Status - Desktop */}
+                        <td className="py-3 px-2 sm:px-4 hidden lg:table-cell">
                           <div className="flex items-center space-x-2">
                             {getStatusIcon(userItem.status)}
                             {getStatusBadge(userItem.status)}
                           </div>
                         </td>
-                        <td className="py-4 px-4">
-                          <Badge className={userItem.emailVerified ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800"}>
-                            {userItem.emailVerified ? "Verified" : "Pending"}
+                        {/* Email - Desktop */}
+                        <td className="py-3 px-2 sm:px-4 hidden md:table-cell">
+                          <div className="text-xs text-gray-600 truncate max-w-[150px]">
+                            {userItem.email}
+                          </div>
+                          <Badge className={`mt-1 ${
+                            userItem.emailVerified ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800"
+                          } text-xs`}>
+                            {userItem.emailVerified ? "✓ Verified" : "○ Pending"}
                           </Badge>
                         </td>
-                        <td className="py-4 px-4 text-sm text-gray-600">
-                          {new Date(userItem.createdAt).toLocaleDateString()}
-                        </td>
-                        <td className="py-4 px-4 text-sm text-gray-600">
-                          {userItem.lastLoginAt ? new Date(userItem.lastLoginAt).toLocaleDateString() : "Never"}
-                        </td>
-                        <td className="py-4 px-4">
-                          <div className="flex items-center justify-center space-x-2">
+                        {/* Actions */}
+                        <td className="py-3 px-2 sm:px-4">
+                          <div className="flex items-center justify-center space-x-1">
                             <Button
                               variant="ghost"
                               size="sm"
                               className="h-8 w-8 p-0 hover:bg-blue-50"
                               onClick={() => handleViewUser(userItem.id)}
+                              title="View Details"
                             >
                               <EyeIcon className="w-4 h-4 text-blue-600" />
                             </Button>
@@ -1041,8 +1305,18 @@ export default function UsersPage() {
                               size="sm"
                               className="h-8 w-8 p-0 hover:bg-gray-50"
                               onClick={() => handleEditUser(userItem)}
+                              title="Edit User"
                             >
                               <PencilIcon className="w-4 h-4 text-gray-600" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 w-8 p-0 hover:bg-purple-50"
+                              onClick={() => handleDuplicateUser(userItem)}
+                              title="Duplicate User"
+                            >
+                              <DocumentArrowDownIcon className="w-4 h-4 text-purple-600" />
                             </Button>
                             {(userItem.status === 'PENDING' || userItem.status === 'INACTIVE') ? (
                               <Button
@@ -1059,12 +1333,12 @@ export default function UsersPage() {
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                className="h-8 w-8 p-0 hover:bg-yellow-50"
+                                className="h-8 w-8 p-0 hover:bg-red-50"
                                 onClick={() => handleDeactivateUser(userItem.id)}
                                 disabled={userItem.id === user?.id}
                                 title="Deactivate User"
                               >
-                                <XCircleIcon className="w-4 h-4 text-yellow-600" />
+                                <XCircleIcon className="w-4 h-4 text-red-600" />
                               </Button>
                             ) : null}
                             <Button
@@ -1073,6 +1347,7 @@ export default function UsersPage() {
                               className="h-8 w-8 p-0 hover:bg-red-50"
                               onClick={() => handleDeleteUser(userItem.id)}
                               disabled={userItem.id === user?.id}
+                              title="Delete User"
                             >
                               <TrashIcon className="w-4 h-4 text-red-600" />
                             </Button>
@@ -1189,25 +1464,25 @@ export default function UsersPage() {
                   </div>
                 </div>
 
-                {selectedUserDetail.userTenants && selectedUserDetail.userTenants.length > 0 && (
+                {selectedUserDetail.userAssignments && selectedUserDetail.userAssignments.length > 0 && (
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Tenants</label>
                     <div className="space-y-2">
-                      {selectedUserDetail.userTenants.map((ut: any, index: number) => (
+                      {selectedUserDetail.userAssignments.map((ua: any, index: number) => (
                         <div key={index} className="flex items-center space-x-2 p-2 bg-gray-50 rounded">
                           <Badge className={`${
-                            ut.tenant.type === 'CORE' ? 'bg-purple-100 text-purple-800' :
-                            ut.tenant.type === 'BUSINESS' ? 'bg-blue-100 text-blue-800' :
+                            ua.tenant.type === 'CORE' ? 'bg-purple-100 text-purple-800' :
+                            ua.tenant.type === 'BUSINESS' ? 'bg-blue-100 text-blue-800' :
                             'bg-green-100 text-green-800'
                           } text-xs`}>
-                            {ut.tenant.type}
+                            {ua.tenant.type}
                           </Badge>
-                          <span className="text-sm text-gray-600">{ut.tenant.name}</span>
-                          {ut.isPrimary && (
+                          <span className="text-sm text-gray-600">{ua.tenant.name}</span>
+                          {ua.isPrimary && (
                             <Badge className="bg-yellow-100 text-yellow-800 text-xs">Primary</Badge>
                           )}
                           <Badge className="bg-gray-100 text-gray-800 text-xs">
-                            {ut.role?.displayName || ut.role?.name}
+                            {ua.role?.displayName || ua.role?.name}
                           </Badge>
                         </div>
                       ))}
@@ -1518,7 +1793,7 @@ export default function UsersPage() {
                     <Input
                       placeholder="Enter user full name"
                       value={editUserForm.name}
-                      onChange={(e) => setEditUserForm({...editUserForm, name: e.target.value})}
+                      onChange={(e) => handleEditUserFieldChange('name', e.target.value)}
                     />
                   </div>
 
@@ -1528,7 +1803,7 @@ export default function UsersPage() {
                       type="email"
                       placeholder="user@example.com"
                       value={editUserForm.email}
-                      onChange={(e) => setEditUserForm({...editUserForm, email: e.target.value})}
+                      onChange={(e) => handleEditUserFieldChange('email', e.target.value)}
                     />
                   </div>
 
@@ -1537,7 +1812,7 @@ export default function UsersPage() {
                     <Input
                       placeholder="+62 812-3456-7890"
                       value={editUserForm.phone}
-                      onChange={(e) => setEditUserForm({...editUserForm, phone: e.target.value})}
+                      onChange={(e) => handleEditUserFieldChange('phone', e.target.value)}
                     />
                   </div>
                 </div>
@@ -1551,7 +1826,7 @@ export default function UsersPage() {
                     <select
                       className="w-full p-2 border border-gray-300 rounded-md"
                       value={editUserForm.status}
-                      onChange={(e) => setEditUserForm({...editUserForm, status: e.target.value})}
+                      onChange={(e) => handleEditUserFieldChange('status', e.target.value)}
                     >
                       <option value="PENDING">Pending</option>
                       <option value="ACTIVE">Active</option>
@@ -1565,7 +1840,7 @@ export default function UsersPage() {
                     <select
                       className="w-full p-2 border border-gray-300 rounded-md"
                       value={editUserForm.timezone}
-                      onChange={(e) => setEditUserForm({...editUserForm, timezone: e.target.value})}
+                      onChange={(e) => handleEditUserFieldChange('timezone', e.target.value)}
                     >
                       <option value="UTC">UTC</option>
                       <option value="Asia/Jakarta">Asia/Jakarta (WIB)</option>
@@ -1583,7 +1858,7 @@ export default function UsersPage() {
                     <select
                       className="w-full p-2 border border-gray-300 rounded-md"
                       value={editUserForm.language}
-                      onChange={(e) => setEditUserForm({...editUserForm, language: e.target.value})}
+                      onChange={(e) => handleEditUserFieldChange('language', e.target.value)}
                     >
                       <option value="en">English</option>
                       <option value="id">Bahasa Indonesia</option>
@@ -1643,7 +1918,7 @@ export default function UsersPage() {
                       <select
                         className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
                         value={editUserForm.roleId}
-                        onChange={(e) => setEditUserForm({...editUserForm, roleId: e.target.value})}
+                        onChange={(e) => handleEditUserFieldChange('roleId', e.target.value)}
                         disabled={!editUserForm.tenantId || editRolesLoading}
                       >
                         <option value="">

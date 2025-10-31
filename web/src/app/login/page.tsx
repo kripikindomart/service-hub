@@ -24,8 +24,11 @@ export default function LoginPage() {
 
   const onSubmit = async (data: LoginRequest) => {
     setIsLoading(true)
+    console.log('Login attempt with:', data)
     try {
+      console.log('Calling authApi.login...')
       const response = await authApi.login(data)
+      console.log('Login response:', response)
       if (response.success && response.data) {
         setAuthData(
           response.data.tokens.accessToken,
@@ -38,6 +41,7 @@ export default function LoginPage() {
         toast.error(response.message || 'Login failed')
       }
     } catch (error: any) {
+      console.error('Login error:', error)
       toast.error(error.response?.data?.message || 'Invalid credentials')
     } finally {
       setIsLoading(false)

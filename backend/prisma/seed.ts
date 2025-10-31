@@ -110,6 +110,9 @@ async function main() {
 
   // 5. Create Basic Permissions
   const permissions = [
+    // Super Permission
+    { name: 'permission:all', resource: 'all', action: 'all', scope: 'ALL' as const, description: 'Full access to all resources and actions across all tenants', category: 'Super Admin' },
+
     // User Management
     { name: 'users:read', resource: 'users', action: 'read', scope: 'ALL' as const, description: 'Read user data across all tenants', category: 'User Management' },
     { name: 'users:write', resource: 'users', action: 'write', scope: 'ALL' as const, description: 'Write user data across all tenants', category: 'User Management' },

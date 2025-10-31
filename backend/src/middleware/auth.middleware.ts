@@ -90,12 +90,10 @@ export const authMiddleware = async (
         },
       });
 
+      // If tenant not found or not active, just continue without tenant context
+      // Don't block the request - let individual endpoints handle tenant requirements
       if (!currentTenant || currentTenant.status !== 'ACTIVE') {
-        res.status(401).json({
-          success: false,
-          message: 'Current tenant is not active',
-        });
-        return;
+        currentTenant = null;
       }
     }
 

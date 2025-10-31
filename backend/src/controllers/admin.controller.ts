@@ -3,6 +3,7 @@ import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import { prisma } from '../database/database.service';
 import { asyncHandler, AppError } from '../middleware/error.middleware';
 import { ResponseUtil } from '../utils/response.util';
+import { hasPermission, isSuperAdmin, canAccessTenant, hasAdminAccess } from '../utils/permissions.util';
 
 export class AdminController {
   // Activate pending user
@@ -15,16 +16,13 @@ export class AdminController {
     }
 
     // Verify admin has permission to activate users
-    const adminUserTenant = await prisma.userTenant.findFirst({
-      where: { userId: adminId },
-      include: {
-        role: {
-          select: { level: true },
-        },
-      },
+    const hasUserWritePermission = await hasPermission(adminId, req.tenant?.id || null, {
+      resource: 'users',
+      action: 'write',
+      scope: 'ALL'
     });
 
-    if (!adminUserTenant || !['SUPER_ADMIN', 'ADMIN'].includes(adminUserTenant.role.level)) {
+    if (!hasUserWritePermission) {
       throw new AppError('Insufficient permissions to activate users', 403);
     }
 
@@ -63,16 +61,13 @@ export class AdminController {
     }
 
     // Verify admin has permission to deactivate users
-    const adminUserTenant = await prisma.userTenant.findFirst({
-      where: { userId: adminId },
-      include: {
-        role: {
-          select: { level: true },
-        },
-      },
+    const hasUserWritePermission = await hasPermission(adminId, req.tenant?.id || null, {
+      resource: 'users',
+      action: 'write',
+      scope: 'ALL'
     });
 
-    if (!adminUserTenant || !['SUPER_ADMIN', 'ADMIN'].includes(adminUserTenant.role.level)) {
+    if (!hasUserWritePermission) {
       throw new AppError('Insufficient permissions to deactivate users', 403);
     }
 
@@ -117,7 +112,7 @@ export class AdminController {
     } = req.query;
 
     // Verify admin has permission to view users
-    const adminUserTenant = await prisma.userTenant.findFirst({
+    const adminUserTenant = await prisma.userAssignment.findFirst({
       where: { userId: adminId },
       include: {
         role: {
@@ -126,7 +121,35 @@ export class AdminController {
       },
     });
 
-    if (!adminUserTenant || !['SUPER_ADMIN', 'ADMIN'].includes(adminUserTenant.role.level)) {
+    // Check if user is super admin
+    const user = await prisma.user.findUnique({
+      where: { id: adminId },
+      select: {
+        homeTenantId: true,
+        email: true
+      }
+    });
+
+    // Check if user is super admin by checking home tenant is CORE type
+    let isSuperAdmin = false;
+    if (user?.homeTenantId) {
+      const homeTenant = await prisma.tenant.findUnique({
+        where: { id: user.homeTenantId },
+        select: { type: true }
+      });
+      isSuperAdmin = homeTenant?.type === 'CORE';
+    }
+
+    // Alternative: Check if user email is superadmin@system.com (from seed)
+    if (user?.email === 'superadmin@system.com') {
+      isSuperAdmin = true;
+    }
+
+    // Allow access if user has admin role OR is super admin
+    const hasPermission = await hasAdminAccess(adminId);
+    const isAllowed = hasPermission || isSuperAdmin;
+
+    if (!isAllowed) {
       throw new AppError('Insufficient permissions to view users', 403);
     }
 
@@ -188,7 +211,7 @@ export class AdminController {
           createdAt: true,
           updatedAt: true,
           lastLoginAt: true,
-          userTenants: {
+          userAssignments: {
             select: {
               tenant: {
                 select: {
@@ -233,7 +256,7 @@ export class AdminController {
     }
 
     // Verify admin has permission to view user details
-    const adminUserTenant = await prisma.userTenant.findFirst({
+    const adminUserTenant = await prisma.userAssignment.findFirst({
       where: { userId: adminId },
       include: {
         role: {
@@ -242,7 +265,7 @@ export class AdminController {
       },
     });
 
-    if (!adminUserTenant || !['SUPER_ADMIN', 'ADMIN'].includes(adminUserTenant.role.level)) {
+    if (!await hasAdminAccess(adminId)) {
       throw new AppError('Insufficient permissions to view user details', 403);
     }
 
@@ -265,7 +288,7 @@ export class AdminController {
         failedLoginAttempts: true,
         lockedUntil: true,
         tokenVersion: true,
-        userTenants: {
+        userAssignments: {
           select: {
             status: true,
             tenant: {
@@ -328,19 +351,13 @@ export class AdminController {
     }
 
     // Verify admin has permission to create users in this tenant
-    const adminUserTenant = await prisma.userTenant.findUnique({
-      where: {
-        userId_tenantId: {
-          userId: adminId,
-          tenantId,
-        },
-      },
-      include: {
-        role: true,
-      },
+    const canCreateUser = await canAccessTenant(adminId, tenantId, {
+      resource: 'users',
+      action: 'write',
+      scope: 'TENANT'
     });
 
-    if (!adminUserTenant || !['SUPER_ADMIN', 'ADMIN'].includes(adminUserTenant.role.level)) {
+    if (!canCreateUser) {
       throw new AppError('Insufficient permissions to create users in this tenant', 403);
     }
 
@@ -377,11 +394,13 @@ export class AdminController {
         passwordHash: tempPassword, // Will be hashed by pre-save middleware
         emailVerified: false,
         createdBy: adminId,
+        homeTenantId: tenantId, // Set home tenant
+        currentTenantId: tenantId, // Set current tenant
       },
     });
 
     // Create user-tenant relationship
-    await prisma.userTenant.create({
+    await prisma.userAssignment.create({
       data: {
         userId: user.id,
         tenantId,
@@ -398,7 +417,7 @@ export class AdminController {
     const createdUser = await prisma.user.findUnique({
       where: { id: user.id },
       include: {
-        userTenants: {
+        userAssignments: {
           select: {
             status: true,
             tenant: {
@@ -425,7 +444,7 @@ export class AdminController {
     const responseUser = {
       ...createdUser,
       tempPassword, // Include temp password in response for admin to give to user
-      tenantInfo: createdUser?.userTenants?.[0],
+      tenantInfo: createdUser?.userAssignments?.[0],
     };
 
     res.status(201).json(ResponseUtil.success('User created successfully', responseUser));
@@ -442,7 +461,7 @@ export class AdminController {
     }
 
     // Verify admin has permission to update user
-    const adminUserTenant = await prisma.userTenant.findFirst({
+    const adminUserTenant = await prisma.userAssignment.findFirst({
       where: { userId: adminId },
       include: {
         role: {
@@ -451,7 +470,7 @@ export class AdminController {
       },
     });
 
-    if (!adminUserTenant || !['SUPER_ADMIN', 'ADMIN'].includes(adminUserTenant.role.level)) {
+    if (!await hasAdminAccess(adminId)) {
       throw new AppError('Insufficient permissions to update users', 403);
     }
 
@@ -506,9 +525,11 @@ export class AdminController {
   });
 
   // Delete user (admin only)
+  // Soft delete user (move to trash)
   deleteUser = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const adminId = req.user!.id;
+    const { reason } = req.body; // Optional deletion reason
 
     if (!id) {
       throw new AppError('User ID is required', 400);
@@ -520,36 +541,51 @@ export class AdminController {
     }
 
     // Verify admin has permission to delete users
-    const adminUserTenant = await prisma.userTenant.findFirst({
-      where: { userId: adminId },
-      include: {
-        role: {
-          select: { level: true },
-        },
-      },
-    });
-
-    if (!adminUserTenant || !['SUPER_ADMIN', 'ADMIN'].includes(adminUserTenant.role.level)) {
+    if (!await hasAdminAccess(adminId)) {
       throw new AppError('Insufficient permissions to delete users', 403);
     }
 
     // Check if user exists
     const existingUser = await prisma.user.findUnique({
-      where: { id },
+      where: { id, deletedAt: null }, // Only allow deletion of non-deleted users
     });
 
     if (!existingUser) {
       throw new AppError('User not found', 404);
     }
 
-    // Delete user and all related records in a transaction
-    await prisma.$transaction([
-      prisma.session.deleteMany({ where: { userId: id } }),
-      prisma.userTenant.deleteMany({ where: { userId: id } }),
-      prisma.user.delete({ where: { id } })
-    ]);
+    // Soft delete user with audit trail
+    await prisma.user.update({
+      where: { id },
+      data: {
+        status: 'DELETED',
+        deletedAt: new Date(),
+        deletedBy: adminId,
+        deletionReason: reason || 'Deleted by admin',
+        updatedAt: new Date(),
+        updatedBy: adminId
+      }
+    });
 
-    res.json(ResponseUtil.success('User deleted successfully', null));
+    // Deactivate all user assignments
+    await prisma.userAssignment.updateMany({
+      where: { userId: id },
+      data: {
+        status: 'INACTIVE',
+        updatedAt: new Date()
+      }
+    });
+
+    // Terminate all active sessions
+    await prisma.session.updateMany({
+      where: { userId: id, isActive: true },
+      data: {
+        isActive: false,
+        lastAccessAt: new Date()
+      }
+    });
+
+    res.json(ResponseUtil.success('User moved to trash successfully', null));
   });
 
   // Create system permission
@@ -558,7 +594,7 @@ export class AdminController {
     const { name, resource, action, scope, description, category } = req.body;
 
     // Verify super admin permission
-    const adminUserTenant = await prisma.userTenant.findFirst({
+    const adminUserTenant = await prisma.userAssignment.findFirst({
       where: { userId: adminId },
       include: {
         role: {
@@ -567,7 +603,7 @@ export class AdminController {
       },
     });
 
-    if (!adminUserTenant || adminUserTenant.role.level !== 'SUPER_ADMIN') {
+    if (!await isSuperAdmin(adminId)) {
       throw new AppError('Only super admin can create permissions', 403);
     }
 
@@ -584,6 +620,423 @@ export class AdminController {
     });
 
     res.status(201).json(ResponseUtil.success('Permission created successfully', permission));
+  });
+
+  // Restore user from trash
+  restoreUser = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+    const adminId = req.user!.id;
+
+    if (!id) {
+      throw new AppError('User ID is required', 400);
+    }
+
+    // Verify admin has permission to restore users
+    if (!await hasAdminAccess(adminId)) {
+      throw new AppError('Insufficient permissions to restore users', 403);
+    }
+
+    // Check if user exists in trash
+    const existingUser = await prisma.user.findUnique({
+      where: { id, deletedAt: { not: null } },
+    });
+
+    if (!existingUser) {
+      throw new AppError('User not found in trash', 404);
+    }
+
+    // Restore user
+    await prisma.user.update({
+      where: { id },
+      data: {
+        status: 'ACTIVE',
+        deletedAt: null,
+        deletedBy: null,
+        deletionReason: null,
+        updatedAt: new Date(),
+        updatedBy: adminId
+      }
+    });
+
+    // Reactivate primary user assignment
+    await prisma.userAssignment.updateMany({
+      where: { userId: id, isPrimary: true },
+      data: {
+        status: 'ACTIVE',
+        updatedAt: new Date()
+      }
+    });
+
+    res.json(ResponseUtil.success('User restored successfully', null));
+  });
+
+  // Archive user
+  archiveUser = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+    const adminId = req.user!.id;
+
+    if (!id) {
+      throw new AppError('User ID is required', 400);
+    }
+
+    // Prevent self-archiving
+    if (id === adminId) {
+      throw new AppError('Cannot archive your own account', 400);
+    }
+
+    // Verify admin has permission to archive users
+    if (!await hasAdminAccess(adminId)) {
+      throw new AppError('Insufficient permissions to archive users', 403);
+    }
+
+    // Check if user exists
+    const existingUser = await prisma.user.findUnique({
+      where: { id, deletedAt: null, archivedAt: null },
+    });
+
+    if (!existingUser) {
+      throw new AppError('User not found or already archived/deleted', 404);
+    }
+
+    // Archive user
+    await prisma.user.update({
+      where: { id },
+      data: {
+        status: 'ARCHIVED',
+        archivedAt: new Date(),
+        updatedAt: new Date(),
+        updatedBy: adminId
+      }
+    });
+
+    // Deactivate all user assignments
+    await prisma.userAssignment.updateMany({
+      where: { userId: id },
+      data: {
+        status: 'INACTIVE',
+        updatedAt: new Date()
+      }
+    });
+
+    // Terminate all active sessions
+    await prisma.session.updateMany({
+      where: { userId: id, isActive: true },
+      data: {
+        isActive: false,
+        lastAccessAt: new Date()
+      }
+    });
+
+    res.json(ResponseUtil.success('User archived successfully', null));
+  });
+
+  // Unarchive user
+  unarchiveUser = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+    const adminId = req.user!.id;
+
+    if (!id) {
+      throw new AppError('User ID is required', 400);
+    }
+
+    // Verify admin has permission to unarchive users
+    if (!await hasAdminAccess(adminId)) {
+      throw new AppError('Insufficient permissions to unarchive users', 403);
+    }
+
+    // Check if user exists in archive
+    const existingUser = await prisma.user.findUnique({
+      where: { id, archivedAt: { not: null }, deletedAt: null },
+    });
+
+    if (!existingUser) {
+      throw new AppError('User not found in archive', 404);
+    }
+
+    // Unarchive user
+    await prisma.user.update({
+      where: { id },
+      data: {
+        status: 'ACTIVE',
+        archivedAt: null,
+        updatedAt: new Date(),
+        updatedBy: adminId
+      }
+    });
+
+    // Reactivate primary user assignment
+    await prisma.userAssignment.updateMany({
+      where: { userId: id, isPrimary: true },
+      data: {
+        status: 'ACTIVE',
+        updatedAt: new Date()
+      }
+    });
+
+    res.json(ResponseUtil.success('User unarchived successfully', null));
+  });
+
+  // Hard delete user (permanent deletion)
+  permanentDeleteUser = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+    const adminId = req.user!.id;
+
+    if (!id) {
+      throw new AppError('User ID is required', 400);
+    }
+
+    // Prevent self-deletion
+    if (id === adminId) {
+      throw new AppError('Cannot permanently delete your own account', 400);
+    }
+
+    // Verify admin has SUPER_ADMIN level for permanent deletion
+    const adminUserTenant = await prisma.userAssignment.findFirst({
+      where: { userId: adminId },
+      include: {
+        role: {
+          select: { level: true },
+        },
+      },
+    });
+
+    if (!adminUserTenant || adminUserTenant.role.level !== 'SUPER_ADMIN') {
+      throw new AppError('Only SUPER_ADMIN can permanently delete users', 403);
+    }
+
+    // Check if user exists (including deleted)
+    const existingUser = await prisma.user.findUnique({
+      where: { id },
+    });
+
+    if (!existingUser) {
+      throw new AppError('User not found', 404);
+    }
+
+    // Hard delete user and all related records in a transaction
+    await prisma.$transaction([
+      prisma.session.deleteMany({ where: { userId: id } }),
+      prisma.userAssignment.deleteMany({ where: { userId: id } }),
+      prisma.user.delete({ where: { id } })
+    ]);
+
+    res.json(ResponseUtil.success('User permanently deleted', null));
+  });
+
+  // Get deleted users (trash)
+  getDeletedUsers = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const adminId = req.user!.id;
+    const {
+      page = 1,
+      limit = 20,
+      search,
+      dateFrom,
+      dateTo,
+      sortBy = 'deletedAt',
+      sortOrder = 'desc'
+    } = req.query;
+
+    const pageNumber = parseInt(page as string) || 1;
+    const limitNumber = parseInt(limit as string) || 20;
+    const skip = (pageNumber - 1) * limitNumber;
+
+    // Verify admin has permission
+    if (!await hasAdminAccess(adminId)) {
+      throw new AppError('Insufficient permissions to view deleted users', 403);
+    }
+
+    // Build where clause
+    const where: any = {
+      deletedAt: { not: null }
+    };
+
+    // Search functionality
+    if (search) {
+      where.OR = [
+        { name: { contains: search as string, mode: 'insensitive' } },
+        { email: { contains: search as string, mode: 'insensitive' } },
+        { deletionReason: { contains: search as string, mode: 'insensitive' } }
+      ];
+    }
+
+    // Date range filter
+    if (dateFrom || dateTo) {
+      where.deletedAt = {};
+      if (dateFrom) where.deletedAt.gte = new Date(dateFrom as string);
+      if (dateTo) where.deletedAt.lte = new Date(dateTo as string);
+    }
+
+    // Build dynamic orderBy
+    const orderBy: any = {};
+    const validSortFields = ['deletedAt', 'createdAt', 'updatedAt', 'email', 'name', 'status'];
+    if (sortBy && typeof sortBy === 'string' && validSortFields.includes(sortBy)) {
+      orderBy[sortBy] = sortOrder === 'asc' ? 'asc' : 'desc';
+    } else {
+      orderBy.deletedAt = 'desc';
+    }
+
+    const [users, totalCount] = await Promise.all([
+      prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          status: true,
+          emailVerified: true,
+          phone: true,
+          deletedAt: true,
+          deletedBy: true,
+          deletionReason: true,
+          createdAt: true,
+          updatedAt: true,
+          lastLoginAt: true,
+          userAssignments: {
+            select: {
+              tenant: {
+                select: {
+                  id: true,
+                  name: true,
+                  slug: true,
+                  type: true,
+                  status: true,
+                },
+              },
+              role: {
+                select: {
+                  displayName: true,
+                  level: true,
+                },
+              },
+              status: true,
+              isPrimary: true
+            },
+          },
+        },
+        orderBy,
+        skip,
+        take: limitNumber,
+      }),
+      prisma.user.count({ where }),
+    ]);
+
+    const pagination = {
+      page: pageNumber,
+      limit: limitNumber,
+      total: totalCount,
+      totalPages: Math.ceil(totalCount / limitNumber),
+      hasNext: pageNumber * limitNumber < totalCount,
+      hasPrev: pageNumber > 1,
+    };
+
+    res.json(ResponseUtil.paginated('Deleted users retrieved successfully', users, pageNumber, limitNumber, totalCount));
+  });
+
+  // Get archived users
+  getArchivedUsers = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const adminId = req.user!.id;
+    const {
+      page = 1,
+      limit = 20,
+      search,
+      dateFrom,
+      dateTo,
+      sortBy = 'archivedAt',
+      sortOrder = 'desc'
+    } = req.query;
+
+    const pageNumber = parseInt(page as string) || 1;
+    const limitNumber = parseInt(limit as string) || 20;
+    const skip = (pageNumber - 1) * limitNumber;
+
+    // Verify admin has permission
+    if (!await hasAdminAccess(adminId)) {
+      throw new AppError('Insufficient permissions to view archived users', 403);
+    }
+
+    // Build where clause
+    const where: any = {
+      archivedAt: { not: null },
+      deletedAt: null
+    };
+
+    // Search functionality
+    if (search) {
+      where.OR = [
+        { name: { contains: search as string, mode: 'insensitive' } },
+        { email: { contains: search as string, mode: 'insensitive' } }
+      ];
+    }
+
+    // Date range filter
+    if (dateFrom || dateTo) {
+      where.archivedAt = {};
+      if (dateFrom) where.archivedAt.gte = new Date(dateFrom as string);
+      if (dateTo) where.archivedAt.lte = new Date(dateTo as string);
+    }
+
+    // Build dynamic orderBy
+    const orderBy: any = {};
+    const validSortFields = ['archivedAt', 'createdAt', 'updatedAt', 'email', 'name', 'status'];
+    if (sortBy && typeof sortBy === 'string' && validSortFields.includes(sortBy)) {
+      orderBy[sortBy] = sortOrder === 'asc' ? 'asc' : 'desc';
+    } else {
+      orderBy.archivedAt = 'desc';
+    }
+
+    const [users, totalCount] = await Promise.all([
+      prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          status: true,
+          emailVerified: true,
+          phone: true,
+          archivedAt: true,
+          createdAt: true,
+          updatedAt: true,
+          lastLoginAt: true,
+          userAssignments: {
+            select: {
+              tenant: {
+                select: {
+                  id: true,
+                  name: true,
+                  slug: true,
+                  type: true,
+                  status: true,
+                },
+              },
+              role: {
+                select: {
+                  displayName: true,
+                  level: true,
+                },
+              },
+              status: true,
+              isPrimary: true
+            },
+          },
+        },
+        orderBy,
+        skip,
+        take: limitNumber,
+      }),
+      prisma.user.count({ where }),
+    ]);
+
+    const pagination = {
+      page: pageNumber,
+      limit: limitNumber,
+      total: totalCount,
+      totalPages: Math.ceil(totalCount / limitNumber),
+      hasNext: pageNumber * limitNumber < totalCount,
+      hasPrev: pageNumber > 1,
+    };
+
+    res.json(ResponseUtil.paginated('Archived users retrieved successfully', users, pageNumber, limitNumber, totalCount));
   });
 
   // Get all permissions
@@ -603,7 +1056,7 @@ export class AdminController {
     } = req.query;
 
     // Verify admin permission
-    const adminUserTenant = await prisma.userTenant.findFirst({
+    const adminUserTenant = await prisma.userAssignment.findFirst({
       where: { userId: adminId },
       include: {
         role: {
@@ -612,7 +1065,7 @@ export class AdminController {
       },
     });
 
-    if (!adminUserTenant || !['SUPER_ADMIN', 'ADMIN'].includes(adminUserTenant.role.level)) {
+    if (!await hasAdminAccess(adminId)) {
       throw new AppError('Insufficient permissions to view permissions', 403);
     }
 
@@ -693,7 +1146,7 @@ export class AdminController {
     }
 
     // Verify admin has permission to perform bulk actions
-    const adminUserTenant = await prisma.userTenant.findFirst({
+    const adminUserTenant = await prisma.userAssignment.findFirst({
       where: { userId: adminId },
       include: {
         role: {
@@ -702,7 +1155,7 @@ export class AdminController {
       },
     });
 
-    if (!adminUserTenant || !['SUPER_ADMIN', 'ADMIN'].includes(adminUserTenant.role.level)) {
+    if (!await hasAdminAccess(adminId)) {
       throw new AppError('Insufficient permissions to perform bulk actions', 403);
     }
 
@@ -756,7 +1209,7 @@ export class AdminController {
             // Delete related records
             await prisma.$transaction([
               prisma.session.deleteMany({ where: { userId } }),
-              prisma.userTenant.deleteMany({ where: { userId } }),
+              prisma.userAssignment.deleteMany({ where: { userId } }),
               prisma.user.delete({ where: { id: userId } })
             ]);
             result = { id: userId, deleted: true };
@@ -803,7 +1256,7 @@ export class AdminController {
     } = req.query;
 
     // Verify admin has permission to export users
-    const adminUserTenant = await prisma.userTenant.findFirst({
+    const adminUserTenant = await prisma.userAssignment.findFirst({
       where: { userId: adminId },
       include: {
         role: {
@@ -812,7 +1265,7 @@ export class AdminController {
       },
     });
 
-    if (!adminUserTenant || !['SUPER_ADMIN', 'ADMIN'].includes(adminUserTenant.role.level)) {
+    if (!await hasAdminAccess(adminId)) {
       throw new AppError('Insufficient permissions to export users', 403);
     }
 
@@ -854,7 +1307,7 @@ export class AdminController {
         createdAt: true,
         updatedAt: true,
         lastLoginAt: true,
-        userTenants: {
+        userAssignments: {
           select: {
             tenant: {
               select: {
@@ -891,8 +1344,8 @@ export class AdminController {
       CreatedAt: user.createdAt,
       UpdatedAt: user.updatedAt,
       LastLoginAt: user.lastLoginAt || 'Never',
-      Tenants: user.userTenants.map(ut => `${ut.tenant.name} (${ut.role.displayName})`).join(', '),
-      PrimaryTenant: user.userTenants.find(ut => ut.isPrimary)?.tenant.name || 'None'
+      Tenants: user.userAssignments.map(ua => `${ua.tenant.name} (${ua.role.displayName})`).join(', '),
+      PrimaryTenant: user.userAssignments.find(ua => ua.isPrimary)?.tenant.name || 'None'
     }));
 
     if (format === 'csv') {
