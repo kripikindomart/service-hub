@@ -1021,6 +1021,16 @@ export default function TenantsPage() {
                                     <PencilIcon className="w-4 h-4 text-green-600" />
                                   </Button>
                                 )}
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="w-8 h-8 p-0 hover:bg-purple-50"
+                                  onClick={() => console.log('Duplicate tenant:', tenant.id)}
+                                  disabled={tenant.type === 'CORE'}
+                                  title={tenant.type === 'CORE' ? 'Cannot duplicate CORE tenant' : 'Duplicate tenant'}
+                                >
+                                  <DocumentDuplicateIcon className="w-4 h-4 text-purple-600" />
+                                </Button>
                                 {canDeleteTenant(tenant) && (
                                   <>
                                     <Button
