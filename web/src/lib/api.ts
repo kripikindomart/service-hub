@@ -436,6 +436,21 @@ export const tenantApi = {
     const response = await api.delete(`/api/v1/tenants/${tenantId}/permanent`)
     return response.data
   },
+
+  restoreTenant: async (tenantId: string): Promise<ApiResponse<Tenant>> => {
+    const response = await api.post(`/api/v1/tenants/${tenantId}/restore`)
+    return response.data
+  },
+
+  bulkRestoreTenants: async (tenantIds: string[]): Promise<ApiResponse<void>> => {
+    const response = await api.post('/api/v1/tenants/bulk-restore', { tenantIds })
+    return response.data
+  },
+
+  bulkPermanentDeleteTenants: async (tenantIds: string[]): Promise<ApiResponse<void>> => {
+    const response = await api.post('/api/v1/tenants/bulk-permanent-delete', { tenantIds })
+    return response.data
+  },
 }
 export const permissionApi = {
   getPermissions: async (params?: {

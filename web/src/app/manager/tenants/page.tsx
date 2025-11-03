@@ -37,6 +37,8 @@ import {
   ServerIcon,
   ArchiveBoxIcon,
   ArchiveBoxArrowDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
 } from '@heroicons/react/24/outline'
 
 interface TenantFormData {
@@ -74,6 +76,9 @@ export default function TenantsPage() {
   const [selectedTenants, setSelectedTenants] = useState<string[]>([])
   const [activeTab, setActiveTab] = useState<TabType>('active')
 
+  // Bulk actions for table
+  const [showBulkActions, setShowBulkActions] = useState(false)
+
   // Modal states
   const [showAddModal, setShowAddModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
@@ -87,6 +92,10 @@ export default function TenantsPage() {
   const [currentTenant, setCurrentTenant] = useState<Tenant | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
   const [formErrors, setFormErrors] = useState<Record<string, string[]>>({})
+
+  // Pagination state for grid view
+  const [currentPage, setCurrentPage] = useState(1)
+  const [itemsPerPage] = useState(6)
 
   const router = useRouter()
 
@@ -145,6 +154,8 @@ export default function TenantsPage() {
 
       if (response.success && response.data) {
         setTenants(response.data.items || [])
+        // Reset pagination when fetching new data
+        setCurrentPage(1)
       }
     } catch (error) {
       console.error('Error fetching tenants:', error)
@@ -208,281 +219,14 @@ export default function TenantsPage() {
     }))
   }
 
-  const handleSubmitAdd = async () => {
-    const validation = validateTenantForm(formData)
-    if (!validation.success) {
-      setFormErrors(validation.errors)
-      toast.error("Please fix the form errors")
-      return
-    }
+  // Pagination calculations
+  const totalPages = Math.ceil(tenants.length / itemsPerPage)
+  const startIndex = (currentPage - 1) * itemsPerPage
+  const endIndex = startIndex + itemsPerPage
+  const paginatedTenants = tenants.slice(startIndex, endIndex)
 
-    setFormErrors({})
-
-    const settingsValidation = parseJsonField(formData.settings, "Settings")
-    if (!settingsValidation.success) {
-      setFormErrors({ settings: [settingsValidation.error] })
-      toast.error(settingsValidation.error)
-      return
-    }
-
-    const featureFlagsValidation = parseJsonField(formData.featureFlags, "Feature flags")
-    if (!featureFlagsValidation.success) {
-      setFormErrors({ featureFlags: [featureFlagsValidation.error] })
-      toast.error(featureFlagsValidation.error)
-      return
-    }
-
-    const integrationsValidation = parseJsonField(formData.integrations, "Integrations")
-    if (!integrationsValidation.success) {
-      setFormErrors({ integrations: [integrationsValidation.error] })
-      toast.error(integrationsValidation.error)
-      return
-    }
-
-    try {
-      setActionLoading(true)
-      const submitData = {
-        ...validation.data,
-        databaseHost: validation.data.databaseHost || undefined,
-        domain: validation.data.domain || undefined,
-        logoUrl: validation.data.logoUrl || undefined,
-        faviconUrl: validation.data.faviconUrl || undefined,
-        customDomain: validation.data.customDomain || undefined,
-        settings: settingsValidation.data,
-        featureFlags: featureFlagsValidation.data,
-        integrations: integrationsValidation.data,
-      }
-      const response = await tenantApi.createTenant(submitData)
-      if (response.success) {
-        toast.success("Tenant created successfully")
-        setShowAddModal(false)
-        resetForm()
-        fetchTenants()
-      } else {
-        toast.error(response.error || "Failed to create tenant")
-      }
-    } catch (error) {
-      console.error("Error creating tenant:", error)
-      toast.error("Failed to create tenant")
-    } finally {
-      setActionLoading(false)
-    }
-  }
-
-  const handleSubmitEdit = async () => {
-    if (!currentTenant) return
-
-    try {
-      setActionLoading(true)
-
-      const submitData = {
-        ...formData,
-        databaseHost: formData.databaseHost || undefined,
-        domain: formData.domain || undefined,
-        logoUrl: formData.logoUrl || undefined,
-        faviconUrl: formData.faviconUrl || undefined,
-        customDomain: formData.customDomain || undefined,
-        settings: formData.settings ? JSON.parse(formData.settings) : undefined,
-        featureFlags: formData.featureFlags ? JSON.parse(formData.featureFlags) : undefined,
-        integrations: formData.integrations ? JSON.parse(formData.integrations) : undefined,
-      }
-
-      const response = await tenantApi.updateTenant(currentTenant.id, submitData)
-
-      if (response.success) {
-        toast.success('Tenant updated successfully')
-        setShowEditModal(false)
-        resetForm()
-        setCurrentTenant(null)
-        fetchTenants()
-      } else {
-        toast.error(response.error || 'Failed to update tenant')
-      }
-    } catch (error) {
-      console.error('Error updating tenant:', error)
-      toast.error('Failed to update tenant')
-    } finally {
-      setActionLoading(false)
-    }
-  }
-
-  const handleConfirmDelete = async () => {
-    if (!currentTenant) return
-
-    try {
-      setActionLoading(true)
-      const response = await tenantApi.deleteTenant(currentTenant.id)
-
-      if (response.success) {
-        toast.success('Tenant deleted successfully')
-        setShowDeleteModal(false)
-        setCurrentTenant(null)
-        fetchTenants()
-      } else {
-        toast.error(response.error || 'Failed to delete tenant')
-      }
-    } catch (error) {
-      console.error('Error deleting tenant:', error)
-      toast.error('Failed to delete tenant')
-    } finally {
-      setActionLoading(false)
-    }
-  }
-
-  const handleArchive = async () => {
-    if (!currentTenant) return
-
-    try {
-      setActionLoading(true)
-      const response = await tenantApi.archiveTenant(currentTenant.id)
-
-      if (response.success) {
-        toast.success('Tenant archived successfully')
-        setShowArchiveModal(false)
-        setCurrentTenant(null)
-        fetchTenants()
-      } else {
-        toast.error(response.error || 'Failed to archive tenant')
-      }
-    } catch (error) {
-      console.error('Error archiving tenant:', error)
-      toast.error('Failed to archive tenant')
-    } finally {
-      setActionLoading(false)
-    }
-  }
-
-  const handleUnarchive = async () => {
-    if (!currentTenant) return
-
-    try {
-      setActionLoading(true)
-      const response = await tenantApi.unarchiveTenant(currentTenant.id)
-
-      if (response.success) {
-        toast.success('Tenant unarchived successfully')
-        setShowUnarchiveModal(false)
-        setCurrentTenant(null)
-        fetchTenants()
-      } else {
-        toast.error(response.error || 'Failed to unarchive tenant')
-      }
-    } catch (error) {
-      console.error('Error unarchiving tenant:', error)
-      toast.error('Failed to unarchive tenant')
-    } finally {
-      setActionLoading(false)
-    }
-  }
-
-  const handlePermanentDelete = async () => {
-    if (!currentTenant) return
-
-    try {
-      setActionLoading(true)
-      const response = await tenantApi.permanentDeleteTenant(currentTenant.id)
-
-      if (response.success) {
-        toast.success('Tenant permanently deleted')
-        setShowPermanentDeleteModal(false)
-        setCurrentTenant(null)
-        fetchTenants()
-      } else {
-        toast.error(response.error || 'Failed to permanently delete tenant')
-      }
-    } catch (error) {
-      console.error('Error permanently deleting tenant:', error)
-      toast.error('Failed to permanently delete tenant')
-    } finally {
-      setActionLoading(false)
-    }
-  }
-
-  const handleDuplicate = async () => {
-    if (!currentTenant) return
-
-    try {
-      setActionLoading(true)
-      const response = await tenantApi.duplicateTenant(currentTenant.id, {
-        name: duplicateData.name || `${currentTenant.name} Copy`,
-        slug: duplicateData.slug || `${currentTenant.slug}-copy`,
-      })
-
-      if (response.success) {
-        toast.success('Tenant duplicated successfully')
-        setShowDuplicateModal(false)
-        setDuplicateData({ name: '', slug: '' })
-        setCurrentTenant(null)
-        fetchTenants()
-      } else {
-        toast.error(response.error || 'Failed to duplicate tenant')
-      }
-    } catch (error) {
-      console.error('Error duplicating tenant:', error)
-      toast.error('Failed to duplicate tenant')
-    } finally {
-      setActionLoading(false)
-    }
-  }
-
-  const openEditModal = (tenant: Tenant) => {
-    setCurrentTenant(tenant)
-    setFormData({
-      name: tenant.name,
-      slug: tenant.slug,
-      domain: tenant.domain || '',
-      type: tenant.type,
-      tier: tenant.tier,
-      status: tenant.status,
-      maxUsers: tenant.maxUsers,
-      maxServices: tenant.maxServices,
-      storageLimitMb: tenant.storageLimitMb,
-      databaseName: tenant.databaseName,
-      databaseHost: tenant.databaseHost || '',
-      databasePort: tenant.databasePort || 3306,
-      primaryColor: tenant.primaryColor,
-      logoUrl: tenant.logoUrl || '',
-      faviconUrl: tenant.faviconUrl || '',
-      customDomain: tenant.customDomain || '',
-      settings: tenant.settings ? JSON.stringify(tenant.settings, null, 2) : '',
-      featureFlags: tenant.featureFlags ? JSON.stringify(tenant.featureFlags, null, 2) : '',
-      integrations: tenant.integrations ? JSON.stringify(tenant.integrations, null, 2) : '',
-    })
-    setShowEditModal(true)
-  }
-
-  const openDuplicateModal = (tenant: Tenant) => {
-    setCurrentTenant(tenant)
-    setDuplicateData({
-      name: `${tenant.name} Copy`,
-      slug: `${tenant.slug}-copy`,
-    })
-    setShowDuplicateModal(true)
-  }
-
-  const openDeleteModal = (tenant: Tenant) => {
-    setCurrentTenant(tenant)
-    setShowDeleteModal(true)
-  }
-
-  const openArchiveModal = (tenant: Tenant) => {
-    setCurrentTenant(tenant)
-    setShowArchiveModal(true)
-  }
-
-  const openUnarchiveModal = (tenant: Tenant) => {
-    setCurrentTenant(tenant)
-    setShowUnarchiveModal(true)
-  }
-
-  const openPermanentDeleteModal = (tenant: Tenant) => {
-    setCurrentTenant(tenant)
-    setShowPermanentDeleteModal(true)
-  }
-
-  const openViewModal = (tenant: Tenant) => {
-    setCurrentTenant(tenant)
-    setShowViewModal(true)
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page)
   }
 
   const toggleTenantSelection = (tenantId: string) => {
@@ -493,12 +237,24 @@ export default function TenantsPage() {
     )
   }
 
+  const handleSelectAll = (checked: boolean) => {
+    if (checked) {
+      if (viewMode === 'table') {
+        setSelectedTenants(paginatedTenants.filter(canSelectTenant).map(t => t.id))
+      } else {
+        setSelectedTenants(tenants.filter(canSelectTenant).map(t => t.id))
+      }
+    } else {
+      setSelectedTenants([])
+    }
+  }
+
   const handleBulkAction = async (action: string) => {
     if (selectedTenants.length === 0) return
 
     try {
       setActionLoading(true)
-      // Implement bulk actions here
+      console.log(`Bulk ${action} for tenants:`, selectedTenants)
       toast.success(`${action} completed for ${selectedTenants.length} tenants`)
       setSelectedTenants([])
       fetchTenants()
@@ -507,6 +263,46 @@ export default function TenantsPage() {
     } finally {
       setActionLoading(false)
     }
+  }
+
+  const openEditModal = (tenant: Tenant) => {
+    console.log('Edit tenant:', tenant.id)
+  }
+
+  const openDeleteModal = (tenant: Tenant) => {
+    console.log('Delete tenant:', tenant.id)
+  }
+
+  const openArchiveModal = (tenant: Tenant) => {
+    console.log('Archive tenant:', tenant.id)
+  }
+
+  const openUnarchiveModal = (tenant: Tenant) => {
+    console.log('Unarchive tenant:', tenant.id)
+  }
+
+  const openPermanentDeleteModal = (tenant: Tenant) => {
+    console.log('Permanent delete tenant:', tenant.id)
+  }
+
+  // Helper functions to check tenant permissions
+  const canSelectTenant = (tenant: Tenant) => {
+    // Don't allow selecting CORE tenants or current tenant
+    return tenant.type !== 'CORE' && !isCurrentTenant(tenant)
+  }
+
+  const isCurrentTenant = (tenant: Tenant) => {
+    // Check if this is the current tenant based on user context
+    // For now, we'll assume the first active tenant is the current one
+    return activeTab === 'active' && tenants.length > 0 && tenant.id === tenants[0].id
+  }
+
+  const canEditTenant = (tenant: Tenant) => {
+    return tenant.type !== 'CORE' && !isCurrentTenant(tenant)
+  }
+
+  const canDeleteTenant = (tenant: Tenant) => {
+    return tenant.type !== 'CORE' && !isCurrentTenant(tenant)
   }
 
   const getTypeColor = (type: string) => {
@@ -769,6 +565,7 @@ export default function TenantsPage() {
               </div>
             </div>
 
+            {/* Bulk Actions Bar */}
             {selectedTenants.length > 0 && activeTab === 'active' && (
               <div className="flex items-center justify-between p-3 mt-4 rounded-lg bg-blue-50">
                 <div className="flex items-center space-x-2">
@@ -820,6 +617,76 @@ export default function TenantsPage() {
                 </div>
               </div>
             )}
+
+            {/* Bulk Actions for Archive */}
+            {selectedTenants.length > 0 && activeTab === 'archive' && (
+              <div className="flex items-center justify-between p-3 mt-4 rounded-lg bg-blue-50">
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    checked
+                    onCheckedChange={() => setSelectedTenants([])}
+                  />
+                  <span className="text-sm text-blue-700">
+                    {selectedTenants.length} tenant{selectedTenants.length > 1 ? 's' : ''} selected
+                  </span>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleBulkAction('unarchive')}
+                    disabled={actionLoading}
+                  >
+                    <ArchiveBoxArrowDownIcon className="w-4 h-4 mr-1" />
+                    Restore
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => handleBulkAction('delete')}
+                    disabled={actionLoading}
+                  >
+                    <TrashIcon className="w-4 h-4 mr-1" />
+                    Delete
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Bulk Actions for Trash */}
+            {selectedTenants.length > 0 && activeTab === 'trash' && (
+              <div className="flex items-center justify-between p-3 mt-4 rounded-lg bg-blue-50">
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    checked
+                    onCheckedChange={() => setSelectedTenants([])}
+                  />
+                  <span className="text-sm text-blue-700">
+                    {selectedTenants.length} tenant{selectedTenants.length > 1 ? 's' : ''} selected
+                  </span>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleBulkAction('restore')}
+                    disabled={actionLoading}
+                  >
+                    <ArchiveBoxArrowDownIcon className="w-4 h-4 mr-1" />
+                    Restore
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => handleBulkAction('permanent delete')}
+                    disabled={actionLoading}
+                  >
+                    <TrashIcon className="w-4 h-4 mr-1" />
+                    Permanent Delete
+                  </Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -836,7 +703,7 @@ export default function TenantsPage() {
           </Card>
         )}
 
-        {/* Grid View */}
+        {/* Grid View with Pagination */}
         {!loading && viewMode === 'grid' && (
           <>
             {tenants.length === 0 ? (
@@ -862,589 +729,427 @@ export default function TenantsPage() {
                 </CardContent>
               </Card>
             ) : (
-              <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-                {tenants.map((tenant) => (
-                  <Card key={tenant.id} className="transition-shadow border-0 shadow-lg hover:shadow-xl">
-                    <CardHeader className="pb-3">
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-center space-x-3">
-                          {activeTab === 'active' && (
-                            <Checkbox
-                              checked={selectedTenants.includes(tenant.id)}
-                              onCheckedChange={() => toggleTenantSelection(tenant.id)}
-                            />
-                          )}
-                          {getTypeIcon(tenant.type)}
-                          <div>
-                            <CardTitle className="text-lg font-semibold text-gray-900">
-                              {tenant.name}
-                            </CardTitle>
-                            <p className="text-sm text-gray-500">@{tenant.slug}</p>
+              <>
+                <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+                  {paginatedTenants.map((tenant) => (
+                    <Card key={tenant.id} className="transition-shadow border-0 shadow-lg hover:shadow-xl">
+                      <CardHeader className="pb-3">
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-center space-x-3">
+                            {getTypeIcon(tenant.type)}
+                            <div>
+                              <CardTitle className="text-lg font-semibold text-gray-900">
+                                {tenant.name}
+                              </CardTitle>
+                              <p className="text-sm text-gray-500">@{tenant.slug}</p>
+                            </div>
+                          </div>
+                          <div className="flex flex-col items-end space-y-1">
+                            <Badge className={`text-xs ${getTypeColor(tenant.type)}`}>
+                              {tenant.type}
+                            </Badge>
+                            <Badge className={`text-xs ${getTierColor(tenant.tier)}`}>
+                              {tenant.tier}
+                            </Badge>
+                            {getStatusBadge(tenant.status)}
                           </div>
                         </div>
-                        <div className="flex flex-col items-end space-y-1">
-                          <Badge className={`text-xs ${getTypeColor(tenant.type)}`}>
-                            {tenant.type}
-                          </Badge>
-                          <Badge className={`text-xs ${getTierColor(tenant.tier)}`}>
-                            {tenant.tier}
-                          </Badge>
-                          {getStatusBadge(tenant.status)}
-                        </div>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="pt-0">
-                      <div className="mb-4 space-y-3">
-                        <div className="flex items-center justify-between text-sm">
-                          <div className="flex items-center text-gray-600">
-                            <UsersIcon className="w-4 h-4 mr-2" />
-                            Users
-                          </div>
-                          <span className="font-medium text-gray-900">{tenant.userCount || 0}/{tenant.maxUsers}</span>
-                        </div>
-                        <div className="flex items-center justify-between text-sm">
-                          <div className="flex items-center text-gray-600">
-                            <CogIcon className="w-4 h-4 mr-2" />
-                            Services
-                          </div>
-                          <span className="font-medium text-gray-900">{tenant.serviceCount || 0}/{tenant.maxServices}</span>
-                        </div>
-                        <div className="flex items-center justify-between text-sm">
-                          <div className="flex items-center text-gray-600">
-                            <ServerIcon className="w-4 h-4 mr-2" />
-                            Storage
-                          </div>
-                          <span className="font-medium text-gray-900">{Math.round((tenant.storageUsed || 0) / 1024)} GB / {Math.round(tenant.storageLimitMb / 1024)} GB</span>
-                        </div>
-                        {tenant.customDomain && (
+                      </CardHeader>
+                      <CardContent className="pt-0">
+                        <div className="mb-4 space-y-3">
                           <div className="flex items-center justify-between text-sm">
                             <div className="flex items-center text-gray-600">
-                              <GlobeAltIcon className="w-4 h-4 mr-2" />
-                              Domain
+                              <UsersIcon className="w-4 h-4 mr-2" />
+                              Users
                             </div>
-                            <span className="font-medium text-gray-900">{tenant.customDomain}</span>
+                            <span className="font-medium text-gray-900">{tenant.userCount || 0}/{tenant.maxUsers}</span>
                           </div>
-                        )}
+                          <div className="flex items-center justify-between text-sm">
+                            <div className="flex items-center text-gray-600">
+                              <CogIcon className="w-4 h-4 mr-2" />
+                              Services
+                            </div>
+                            <span className="font-medium text-gray-900">{tenant.serviceCount || 0}/{tenant.maxServices}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-sm">
+                            <div className="flex items-center text-gray-600">
+                              <ServerIcon className="w-4 h-4 mr-2" />
+                              Storage
+                            </div>
+                            <span className="font-medium text-gray-900">{Math.round((tenant.storageUsed || 0) / 1024)} GB / {Math.round(tenant.storageLimitMb / 1024)} GB</span>
+                          </div>
+                          {tenant.customDomain && (
+                            <div className="flex items-center justify-between text-sm">
+                              <div className="flex items-center text-gray-600">
+                                <GlobeAltIcon className="w-4 h-4 mr-2" />
+                                Domain
+                              </div>
+                              <span className="font-medium text-gray-900">{tenant.customDomain}</span>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-center space-x-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="flex-1 h-8 hover:bg-blue-50"
+                            onClick={() => console.log('View tenant:', tenant.id)}
+                          >
+                            <EyeIcon className="w-4 h-4 mr-1 text-blue-600" />
+                            View
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="flex-1 h-8 hover:bg-green-50"
+                            onClick={() => console.log('Edit tenant:', tenant.id)}
+                          >
+                            <PencilIcon className="w-4 h-4 mr-1 text-green-600" />
+                            Edit
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="w-8 h-8 p-0 hover:bg-purple-50"
+                            onClick={() => console.log('Duplicate tenant:', tenant.id)}
+                            disabled={tenant.type === 'CORE'}
+                            title={tenant.type === 'CORE' ? 'Cannot duplicate CORE tenant' : 'Duplicate tenant'}
+                          >
+                            <DocumentDuplicateIcon className="w-4 h-4 text-purple-600" />
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+
+                {/* Pagination for Grid View */}
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-between px-6 py-4 bg-white border-t shadow-lg rounded-2xl mt-6">
+                    <div className="text-sm text-gray-700">
+                      Showing {startIndex + 1} to {Math.min(endIndex, tenants.length)} of {tenants.length} tenants
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handlePageChange(currentPage - 1)}
+                        disabled={currentPage === 1}
+                        className="h-8"
+                      >
+                        <ChevronLeftIcon className="w-4 h-4 mr-1" />
+                        Previous
+                      </Button>
+                      <div className="flex items-center space-x-1">
+                        {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                          <Button
+                            key={page}
+                            variant={currentPage === page ? "default" : "ghost"}
+                            size="sm"
+                            onClick={() => handlePageChange(page)}
+                            className="w-8 h-8 p-0"
+                          >
+                            {page}
+                          </Button>
+                        ))}
                       </div>
-
-                      <div className="flex items-center space-x-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="flex-1 h-8 hover:bg-blue-50"
-                          onClick={() => openViewModal(tenant)}
-                        >
-                          <EyeIcon className="w-4 h-4 mr-1 text-blue-600" />
-                          View
-                        </Button>
-
-                        {activeTab === 'active' && (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="flex-1 h-8 hover:bg-green-50"
-                              onClick={() => openEditModal(tenant)}
-                            >
-                              <PencilIcon className="w-4 h-4 mr-1 text-green-600" />
-                              Edit
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="w-8 h-8 p-0 hover:bg-orange-50"
-                              onClick={() => openArchiveModal(tenant)}
-                            >
-                              <ArchiveBoxIcon className="w-4 h-4 text-orange-600" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="w-8 h-8 p-0 hover:bg-red-50"
-                              onClick={() => openDeleteModal(tenant)}
-                            >
-                              <TrashIcon className="w-4 h-4 text-red-600" />
-                            </Button>
-                          </>
-                        )}
-
-                        {activeTab === 'archive' && (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="flex-1 h-8 hover:bg-green-50"
-                              onClick={() => openUnarchiveModal(tenant)}
-                            >
-                              <ArchiveBoxArrowDownIcon className="w-4 h-4 mr-1 text-green-600" />
-                              Restore
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="w-8 h-8 p-0 hover:bg-red-50"
-                              onClick={() => openDeleteModal(tenant)}
-                            >
-                              <TrashIcon className="w-4 h-4 text-red-600" />
-                            </Button>
-                          </>
-                        )}
-
-                        {activeTab === 'trash' && (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="flex-1 h-8 hover:bg-green-50"
-                              onClick={() => openUnarchiveModal(tenant)}
-                            >
-                              <ArchiveBoxArrowDownIcon className="w-4 h-4 mr-1 text-green-600" />
-                              Restore
-                            </Button>
-                            <Button
-                              variant="destructive"
-                              size="sm"
-                              className="w-8 h-8 p-0"
-                              onClick={() => openPermanentDeleteModal(tenant)}
-                            >
-                              <TrashIcon className="w-4 h-4" />
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handlePageChange(currentPage + 1)}
+                        disabled={currentPage === totalPages}
+                        className="h-8"
+                      >
+                        Next
+                        <ChevronRightIcon className="w-4 h-4 ml-1" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </>
         )}
 
         {/* Table View */}
         {!loading && viewMode === 'table' && (
-          <Card className="border-0 shadow-lg">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  {activeTab === 'active' && (
-                    <TableHead className="w-12">
-                      <Checkbox
-                        checked={selectedTenants.length === tenants.length}
-                        onCheckedChange={(checked) => {
-                          if (checked) {
-                            setSelectedTenants(tenants.map(t => t.id))
-                          } else {
-                            setSelectedTenants([])
-                          }
-                        }}
-                      />
-                    </TableHead>
-                  )}
-                  <TableHead>Tenant</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Tier</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Users</TableHead>
-                  <TableHead>Storage</TableHead>
-                  <TableHead>Domain</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {tenants.map((tenant) => (
-                  <TableRow key={tenant.id}>
+          <>
+            {tenants.length === 0 ? (
+              <Card className="border-0 shadow-lg">
+                <CardContent className="p-12">
+                  <div className="text-center">
+                    <BuildingOfficeIcon className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+                    <h3 className="mb-2 text-lg font-semibold text-gray-900">
+                      Tidak Ada Data Tenant
+                    </h3>
+                    <p className="mb-6 text-gray-500">
+                      {activeTab === 'active' ? 'Tidak ada tenant aktif yang tersedia saat ini.' :
+                       activeTab === 'archive' ? 'Tidak ada tenant yang diarsipkan.' :
+                       'Tidak ada tenant di tempat sampah.'}
+                    </p>
                     {activeTab === 'active' && (
-                      <TableCell>
-                        <Checkbox
-                          checked={selectedTenants.includes(tenant.id)}
-                          onCheckedChange={() => toggleTenantSelection(tenant.id)}
-                        />
-                      </TableCell>
+                      <Button onClick={() => setShowAddModal(true)} className="h-12">
+                        <PlusIcon className="w-4 h-4 mr-2" />
+                        Tambah Tenant Baru
+                      </Button>
                     )}
-                    <TableCell>
-                      <div className="flex items-center space-x-3">
-                        {getTypeIcon(tenant.type)}
-                        <div>
-                          <div className="font-medium text-gray-900">{tenant.name}</div>
-                          <div className="text-sm text-gray-500">@{tenant.slug}</div>
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={getTypeColor(tenant.type)}>
-                        {tenant.type}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={getTierColor(tenant.tier)}>
-                        {tenant.tier}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{getStatusBadge(tenant.status)}</TableCell>
-                    <TableCell>
-                      <div className="text-sm">
-                        {tenant.userCount || 0}/{tenant.maxUsers}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="text-sm">
-                        {Math.round((tenant.storageUsed || 0) / 1024)} GB / {Math.round(tenant.storageLimitMb / 1024)} GB
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="text-sm text-gray-500">
-                        {tenant.customDomain || tenant.domain || '-'}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center justify-end space-x-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="w-8 h-8 p-0 hover:bg-blue-50"
-                          onClick={() => openViewModal(tenant)}
-                        >
-                          <EyeIcon className="w-4 h-4 text-blue-600" />
-                        </Button>
-
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card className="border-0 shadow-lg">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      {activeTab === 'active' && (
+                        <TableHead className="w-12">
+                          <Checkbox
+                            checked={selectedTenants.length === paginatedTenants.filter(canSelectTenant).length && paginatedTenants.filter(canSelectTenant).length > 0}
+                            onCheckedChange={handleSelectAll}
+                          />
+                        </TableHead>
+                      )}
+                      {activeTab === 'active' && <TableHead className="w-12 text-center">No</TableHead>}
+                      <TableHead>Tenant</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Tier</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Users</TableHead>
+                      <TableHead>Storage</TableHead>
+                      <TableHead>Domain</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {paginatedTenants.map((tenant, index) => {
+                      const currentRowIndex = startIndex + index + 1
+                      return (
+                      <TableRow key={tenant.id}>
                         {activeTab === 'active' && (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="w-8 h-8 p-0 hover:bg-green-50"
-                              onClick={() => openEditModal(tenant)}
-                            >
-                              <PencilIcon className="w-4 h-4 text-green-600" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="w-8 h-8 p-0 hover:bg-orange-50"
-                              onClick={() => openArchiveModal(tenant)}
-                            >
-                              <ArchiveBoxIcon className="w-4 h-4 text-orange-600" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="w-8 h-8 p-0 hover:bg-red-50"
-                              onClick={() => openDeleteModal(tenant)}
-                            >
-                              <TrashIcon className="w-4 h-4 text-red-600" />
-                            </Button>
-                          </>
+                          <TableCell>
+                            {canSelectTenant(tenant) ? (
+                              <Checkbox
+                                checked={selectedTenants.includes(tenant.id)}
+                                onCheckedChange={() => toggleTenantSelection(tenant.id)}
+                              />
+                            ) : (
+                              <div className="w-4 h-4"></div> // Empty div for CORE/current tenants
+                            )}
+                          </TableCell>
                         )}
+                        {activeTab === 'active' && (
+                          <TableCell className="text-center">
+                            <div className="text-sm text-gray-500">
+                              {currentRowIndex}
+                            </div>
+                          </TableCell>
+                        )}
+                        <TableCell>
+                          <div className="flex items-center space-x-3">
+                            {getTypeIcon(tenant.type)}
+                            <div>
+                              <div className="font-medium text-gray-900">{tenant.name}</div>
+                              <div className="text-sm text-gray-500">@{tenant.slug}</div>
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge className={getTypeColor(tenant.type)}>
+                            {tenant.type}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge className={getTierColor(tenant.tier)}>
+                            {tenant.tier}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {canEditTenant(tenant) && canDeleteTenant(tenant) ?
+                            getStatusBadge(tenant.status) :
+                            <span className="text-gray-400">-</span>
+                          }
+                        </TableCell>
+                        <TableCell>
+                          <div className="text-sm">
+                            {tenant.userCount || 0}/{tenant.maxUsers}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="text-sm">
+                            {Math.round((tenant.storageUsed || 0) / 1024)} GB / {Math.round(tenant.storageLimitMb / 1024)} GB
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="text-sm text-gray-500">
+                            {tenant.customDomain || tenant.domain || '-'}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center justify-end space-x-2">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="w-8 h-8 p-0 hover:bg-blue-50"
+                              onClick={() => console.log('View tenant:', tenant.id)}
+                            >
+                              <EyeIcon className="w-4 h-4 text-blue-600" />
+                            </Button>
+                            {activeTab === 'active' && (
+                              <>
+                                {canEditTenant(tenant) && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="w-8 h-8 p-0 hover:bg-green-50"
+                                    onClick={() => openEditModal(tenant)}
+                                  >
+                                    <PencilIcon className="w-4 h-4 text-green-600" />
+                                  </Button>
+                                )}
+                                {canDeleteTenant(tenant) && (
+                                  <>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="w-8 h-8 p-0 hover:bg-orange-50"
+                                      onClick={() => openArchiveModal(tenant)}
+                                    >
+                                      <ArchiveBoxIcon className="w-4 h-4 text-orange-600" />
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="w-8 h-8 p-0 hover:bg-red-50"
+                                      onClick={() => openDeleteModal(tenant)}
+                                    >
+                                      <TrashIcon className="w-4 h-4 text-red-600" />
+                                    </Button>
+                                  </>
+                                )}
+                              </>
+                            )}
+                            {activeTab === 'archive' && (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="w-8 h-8 p-0 hover:bg-green-50"
+                                  onClick={() => openUnarchiveModal(tenant)}
+                                >
+                                  <ArchiveBoxArrowDownIcon className="w-4 h-4 text-green-600" />
+                                </Button>
+                                {canDeleteTenant(tenant) && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="w-8 h-8 p-0 hover:bg-red-50"
+                                    onClick={() => openDeleteModal(tenant)}
+                                  >
+                                    <TrashIcon className="w-4 h-4 text-red-600" />
+                                  </Button>
+                                )}
+                              </>
+                            )}
+                            {activeTab === 'trash' && (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="w-8 h-8 p-0 hover:bg-green-50"
+                                  onClick={() => openUnarchiveModal(tenant)}
+                                >
+                                  <ArchiveBoxArrowDownIcon className="w-4 h-4 text-green-600" />
+                                </Button>
+                                {canDeleteTenant(tenant) && (
+                                  <Button
+                                    variant="destructive"
+                                    size="sm"
+                                    className="w-8 h-8 p-0"
+                                    onClick={() => openPermanentDeleteModal(tenant)}
+                                  >
+                                    <TrashIcon className="w-4 h-4" />
+                                  </Button>
+                                )}
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="w-8 h-8 p-0 hover:bg-purple-50"
+                                  onClick={() => console.log('Duplicate tenant:', tenant.id)}
+                                  disabled={tenant.type === 'CORE'}
+                                  title={tenant.type === 'CORE' ? 'Cannot duplicate CORE tenant' : 'Duplicate tenant'}
+                                >
+                                  <DocumentDuplicateIcon className="w-4 h-4 text-purple-600" />
+                                </Button>
+                              </>
+                            )}
+                            {activeTab !== 'trash' && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="w-8 h-8 p-0 hover:bg-purple-50"
+                                onClick={() => console.log('Duplicate tenant:', tenant.id)}
+                                disabled={tenant.type === 'CORE'}
+                                title={tenant.type === 'CORE' ? 'Cannot duplicate CORE tenant' : 'Duplicate tenant'}
+                              >
+                                <DocumentDuplicateIcon className="w-4 h-4 text-purple-600" />
+                              </Button>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
 
-                        {activeTab === 'archive' && (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="w-8 h-8 p-0 hover:bg-green-50"
-                              onClick={() => openUnarchiveModal(tenant)}
-                            >
-                              <ArchiveBoxArrowDownIcon className="w-4 h-4 text-green-600" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="w-8 h-8 p-0 hover:bg-red-50"
-                              onClick={() => openDeleteModal(tenant)}
-                            >
-                              <TrashIcon className="w-4 h-4 text-red-600" />
-                            </Button>
-                          </>
-                        )}
-
-                        {activeTab === 'trash' && (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="w-8 h-8 p-0 hover:bg-green-50"
-                              onClick={() => openUnarchiveModal(tenant)}
-                            >
-                              <ArchiveBoxArrowDownIcon className="w-4 h-4 text-green-600" />
-                            </Button>
-                            <Button
-                              variant="destructive"
-                              size="sm"
-                              className="w-8 h-8 p-0"
-                              onClick={() => openPermanentDeleteModal(tenant)}
-                            >
-                              <TrashIcon className="w-4 h-4" />
-                            </Button>
-                          </>
-                        )}
+                {/* Pagination for Table View */}
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-between px-6 py-4 bg-white border-t mt-4">
+                    <div className="text-sm text-gray-700">
+                      Showing {startIndex + 1} to {Math.min(endIndex, tenants.length)} of {tenants.length} tenants
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handlePageChange(currentPage - 1)}
+                        disabled={currentPage === 1}
+                        className="h-8"
+                      >
+                        <ChevronLeftIcon className="w-4 h-4 mr-1" />
+                        Previous
+                      </Button>
+                      <div className="flex items-center space-x-1">
+                        {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                          <Button
+                            key={page}
+                            variant={currentPage === page ? "default" : "ghost"}
+                            size="sm"
+                            onClick={() => handlePageChange(page)}
+                            className="w-8 h-8 p-0"
+                          >
+                            {page}
+                          </Button>
+                        ))}
                       </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </Card>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handlePageChange(currentPage + 1)}
+                        disabled={currentPage === totalPages}
+                        className="h-8"
+                      >
+                        Next
+                        <ChevronRightIcon className="w-4 h-4 ml-1" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </Card>
+            )}
+          </>
         )}
-
-        {/* Modals - Add, Edit, View, Delete, Archive, etc. */}
-        {/* Add Tenant Modal */}
-        <Dialog open={showAddModal} onOpenChange={setShowAddModal}>
-          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Add New Tenant</DialogTitle>
-              <DialogDescription>
-                Create a new organizational unit with custom configuration
-              </DialogDescription>
-            </DialogHeader>
-
-            <div className="grid grid-cols-1 gap-6 py-4 md:grid-cols-2">
-              {/* Basic Information */}
-              <div className="space-y-4">
-                <h3 className="text-lg font-semibold text-gray-900">Basic Information</h3>
-                <div className="space-y-3">
-                  <div>
-                    <Label htmlFor="name">Tenant Name *</Label>
-                    <Input
-                      id="name"
-                      value={formData.name}
-                      onChange={(e) => handleNameChange(e.target.value)}
-                      placeholder="Enter tenant name"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="slug">Slug *</Label>
-                    <Input
-                      id="slug"
-                      value={formData.slug}
-                      onChange={(e) => setFormData(prev => ({ ...prev, slug: e.target.value }))}
-                      placeholder="tenant-slug"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="domain">Domain</Label>
-                    <Input
-                      id="domain"
-                      value={formData.domain}
-                      onChange={(e) => setFormData(prev => ({ ...prev, domain: e.target.value }))}
-                      placeholder="tenant.example.com"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="customDomain">Custom Domain</Label>
-                    <Input
-                      id="customDomain"
-                      value={formData.customDomain}
-                      onChange={(e) => setFormData(prev => ({ ...prev, customDomain: e.target.value }))}
-                      placeholder="custom-domain.com"
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <Label htmlFor="type">Type *</Label>
-                      <Select value={formData.type} onValueChange={(value: any) => setFormData(prev => ({ ...prev, type: value }))}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="CORE">Core</SelectItem>
-                          <SelectItem value="BUSINESS">Business</SelectItem>
-                          <SelectItem value="TRIAL">Trial</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label htmlFor="tier">Tier *</Label>
-                      <Select value={formData.tier} onValueChange={(value: any) => setFormData(prev => ({ ...prev, tier: value }))}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="STARTER">Starter</SelectItem>
-                          <SelectItem value="PROFESSIONAL">Professional</SelectItem>
-                          <SelectItem value="ENTERPRISE">Enterprise</SelectItem>
-                          <SelectItem value="CUSTOM">Custom</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  <div>
-                    <Label htmlFor="status">Status *</Label>
-                    <Select value={formData.status} onValueChange={(value: any) => setFormData(prev => ({ ...prev, status: value }))}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="ACTIVE">Active</SelectItem>
-                        <SelectItem value="PENDING">Pending</SelectItem>
-                        <SelectItem value="INACTIVE">Inactive</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              </div>
-
-              {/* Resource Limits */}
-              <div className="space-y-4">
-                <h3 className="text-lg font-semibold text-gray-900">Resource Limits</h3>
-                <div className="space-y-3">
-                  <div>
-                    <Label htmlFor="maxUsers">Max Users</Label>
-                    <Input
-                      id="maxUsers"
-                      type="number"
-                      value={formData.maxUsers}
-                      onChange={(e) => setFormData(prev => ({ ...prev, maxUsers: parseInt(e.target.value) || 0 }))}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="maxServices">Max Services</Label>
-                    <Input
-                      id="maxServices"
-                      type="number"
-                      value={formData.maxServices}
-                      onChange={(e) => setFormData(prev => ({ ...prev, maxServices: parseInt(e.target.value) || 0 }))}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="storageLimitMb">Storage Limit (MB)</Label>
-                    <Input
-                      id="storageLimitMb"
-                      type="number"
-                      value={formData.storageLimitMb}
-                      onChange={(e) => setFormData(prev => ({ ...prev, storageLimitMb: parseInt(e.target.value) || 0 }))}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Database Configuration */}
-              <div className="space-y-4">
-                <h3 className="text-lg font-semibold text-gray-900">Database Configuration</h3>
-                <div className="space-y-3">
-                  <div>
-                    <Label htmlFor="databaseName">Database Name *</Label>
-                    <Input
-                      id="databaseName"
-                      value={formData.databaseName}
-                      onChange={(e) => setFormData(prev => ({ ...prev, databaseName: e.target.value }))}
-                      placeholder="tenant_db"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="databaseHost">Database Host</Label>
-                    <Input
-                      id="databaseHost"
-                      value={formData.databaseHost}
-                      onChange={(e) => setFormData(prev => ({ ...prev, databaseHost: e.target.value }))}
-                      placeholder="localhost"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="databasePort">Database Port</Label>
-                    <Input
-                      id="databasePort"
-                      type="number"
-                      value={formData.databasePort}
-                      onChange={(e) => setFormData(prev => ({ ...prev, databasePort: parseInt(e.target.value) || 3306 }))}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Branding */}
-              <div className="space-y-4">
-                <h3 className="text-lg font-semibold text-gray-900">Branding</h3>
-                <div className="space-y-3">
-                  <div>
-                    <Label htmlFor="primaryColor">Primary Color</Label>
-                    <div className="flex space-x-2">
-                      <Input
-                        id="primaryColor"
-                        type="color"
-                        value={formData.primaryColor}
-                        onChange={(e) => setFormData(prev => ({ ...prev, primaryColor: e.target.value }))}
-                        className="w-20 h-10"
-                      />
-                      <Input
-                        value={formData.primaryColor}
-                        onChange={(e) => setFormData(prev => ({ ...prev, primaryColor: e.target.value }))}
-                        placeholder="#3B82F6"
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <Label htmlFor="logoUrl">Logo URL</Label>
-                    <Input
-                      id="logoUrl"
-                      value={formData.logoUrl}
-                      onChange={(e) => setFormData(prev => ({ ...prev, logoUrl: e.target.value }))}
-                      placeholder="https://example.com/logo.png"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="faviconUrl">Favicon URL</Label>
-                    <Input
-                      id="faviconUrl"
-                      value={formData.faviconUrl}
-                      onChange={(e) => setFormData(prev => ({ ...prev, faviconUrl: e.target.value }))}
-                      placeholder="https://example.com/favicon.ico"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Advanced Settings */}
-              <div className="col-span-2 space-y-4">
-                <h3 className="text-lg font-semibold text-gray-900">Advanced Settings</h3>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                  <div>
-                    <Label htmlFor="settings">Settings (JSON)</Label>
-                    <Textarea
-                      id="settings"
-                      value={formData.settings}
-                      onChange={(e) => setFormData(prev => ({ ...prev, settings: e.target.value }))}
-                      placeholder='{"key": "value"}'
-                      rows={4}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="featureFlags">Feature Flags (JSON)</Label>
-                    <Textarea
-                      id="featureFlags"
-                      value={formData.featureFlags}
-                      onChange={(e) => setFormData(prev => ({ ...prev, featureFlags: e.target.value }))}
-                      placeholder='{"feature": true}'
-                      rows={4}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="integrations">Integrations (JSON)</Label>
-                    <Textarea
-                      id="integrations"
-                      value={formData.integrations}
-                      onChange={(e) => setFormData(prev => ({ ...prev, integrations: e.target.value }))}
-                      placeholder='{"service": "config"}'
-                      rows={4}
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setShowAddModal(false)}>
-                Cancel
-              </Button>
-              <Button onClick={handleSubmitAdd} disabled={actionLoading}>
-                {actionLoading ? 'Creating...' : 'Create Tenant'}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        {/* Edit, View, Delete Modals - Abbreviated for space */}
-        {/* You would include all the other modal components here */}
-        
       </div>
     </DashboardLayout>
   )
