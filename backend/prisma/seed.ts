@@ -240,15 +240,16 @@ async function main() {
 
   const createdSystemRoles = [];
   for (const roleData of systemRoles) {
-    const role = await prisma.role.upsert({
+    // Check if role already exists
+    const existingRole = await prisma.role.findFirst({
       where: {
-        name_tenantId: {
-          name: roleData.name,
-          tenantId: coreTenant.id,
-        }
+        name: roleData.name,
+        tenantId: coreTenant.id,
       },
-      update: roleData,
-      create: {
+    });
+
+    const role = existingRole || await prisma.role.create({
+      data: {
         ...roleData,
         tenantId: coreTenant.id,
       },
@@ -296,19 +297,21 @@ async function main() {
     ];
 
     for (const roleData of tenantRoles) {
-      await prisma.role.upsert({
+      const existingRole = await prisma.role.findFirst({
         where: {
-          name_tenantId: {
-            name: roleData.name,
-            tenantId: tenant.id,
-          }
-        },
-        update: roleData,
-        create: {
-          ...roleData,
+          name: roleData.name,
           tenantId: tenant.id,
         },
       });
+
+      if (!existingRole) {
+        await prisma.role.create({
+          data: {
+            ...roleData,
+            tenantId: tenant.id,
+          },
+        });
+      }
     }
 
     console.log(`✅ Tenant roles created for: ${tenant.name}`);
@@ -493,25 +496,29 @@ async function main() {
     });
 
     if (role) {
-      await prisma.userAssignment.upsert({
+      // Check if assignment already exists
+      const existingAssignment = await prisma.userAssignment.findFirst({
         where: {
-          userId_tenantId: {
-            userId: user.id,
-            tenantId: tenant.id,
-          }
-        },
-        update: {},
-        create: {
           userId: user.id,
           tenantId: tenant.id,
           roleId: role.id,
-          status: userData.status === EntityStatus.ACTIVE ? AssignmentStatus.ACTIVE :
-                userData.status === EntityStatus.INACTIVE ? AssignmentStatus.SUSPENDED :
-                AssignmentStatus.PENDING,
-          isPrimary: true,
-          assignedBy: createdUsers[0].user.id, // Super Admin assigns all
         },
       });
+
+      if (!existingAssignment) {
+        await prisma.userAssignment.create({
+          data: {
+            userId: user.id,
+            tenantId: tenant.id,
+            roleId: role.id,
+            status: userData.status === EntityStatus.ACTIVE ? AssignmentStatus.ACTIVE :
+                    userData.status === EntityStatus.INACTIVE ? AssignmentStatus.SUSPENDED :
+                    AssignmentStatus.PENDING,
+            isPrimary: true,
+            assignedBy: createdUsers[0]?.user?.id || "1", // Super Admin assigns all
+          },
+        });
+      }
 
       console.log(`✅ User assigned to role: ${user.email} -> ${role.displayName}`);
     }
@@ -571,22 +578,26 @@ async function main() {
   const allPermissions = await prisma.permission.findMany();
   const superAdminRole = createdSystemRoles.find(r => r.name === 'SUPER_ADMIN')!;
 
-  // Give all permissions to Super Admin
-  for (const permission of allPermissions) {
-    await prisma.rolePermission.upsert({
-      where: {
-        roleId_permissionId: {
+  if (superAdminRole) {
+    // Give all permissions to Super Admin
+    for (const permission of allPermissions) {
+      const existingRolePermission = await prisma.rolePermission.findFirst({
+        where: {
           roleId: superAdminRole.id,
           permissionId: permission.id,
-        }
-      },
-      update: {},
-      create: {
-        roleId: superAdminRole.id,
-        permissionId: permission.id,
-        grantedBy: createdUsers[0].user.id,
-      },
-    });
+        },
+      });
+
+      if (!existingRolePermission) {
+        await prisma.rolePermission.create({
+          data: {
+            roleId: superAdminRole.id,
+            permissionId: permission.id,
+            grantedBy: createdUsers[0]?.user?.id || "1",
+          },
+        });
+      }
+    }
   }
 
   console.log('✅ All permissions assigned to Super Admin');
