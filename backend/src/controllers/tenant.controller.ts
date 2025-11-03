@@ -95,6 +95,7 @@ export class TenantController {
       slug: ua.tenant.slug,
       type: ua.tenant.type,
       tier: ua.tenant.tier,
+      status: ua.tenant.status,
       role: ua.role.displayName,
       level: ua.role.level,
       isPrimary: ua.isPrimary,
