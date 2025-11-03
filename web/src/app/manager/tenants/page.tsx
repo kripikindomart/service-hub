@@ -95,7 +95,7 @@ export default function TenantsPage() {
 
   // Pagination state for grid view
   const [currentPage, setCurrentPage] = useState(1)
-  const [itemsPerPage] = useState(6)
+  const [itemsPerPage, setItemsPerPage] = useState(6)
 
   const router = useRouter()
 
@@ -227,6 +227,11 @@ export default function TenantsPage() {
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page)
+  }
+
+  const handleItemsPerPageChange = (newItemsPerPage: number) => {
+    setItemsPerPage(newItemsPerPage)
+    setCurrentPage(1) // Reset to first page when changing items per page
   }
 
   const toggleTenantSelection = (tenantId: string) => {
@@ -527,19 +532,19 @@ export default function TenantsPage() {
         {/* Search and Filters */}
         <Card className="border-0 shadow-lg">
           <CardContent className="p-6">
-            <div className="flex flex-col gap-4 lg:flex-row">
-              <div className="relative flex-1">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
+              <div className="relative flex-1 lg:max-w-md">
                 <MagnifyingGlassIcon className="absolute w-5 h-5 text-gray-400 transform -translate-y-1/2 left-3 top-1/2" />
                 <Input
-                  placeholder="Search tenants by name, slug, or domain..."
+                  placeholder="Search tenants..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="h-12 pl-10 border-gray-200 focus:border-primary"
                 />
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Select value={filterType} onValueChange={setFilterType}>
-                  <SelectTrigger className="w-40 h-12">
+                  <SelectTrigger className="w-32 h-12">
                     <SelectValue placeholder="Type" />
                   </SelectTrigger>
                   <SelectContent>
@@ -551,7 +556,7 @@ export default function TenantsPage() {
                 </Select>
                 {activeTab === 'active' && (
                   <Select value={filterStatus} onValueChange={setFilterStatus}>
-                    <SelectTrigger className="w-40 h-12">
+                    <SelectTrigger className="w-32 h-12">
                       <SelectValue placeholder="Status" />
                     </SelectTrigger>
                     <SelectContent>
@@ -562,6 +567,18 @@ export default function TenantsPage() {
                     </SelectContent>
                   </Select>
                 )}
+                <Select value={itemsPerPage.toString()} onValueChange={(value) => handleItemsPerPageChange(parseInt(value))}>
+                  <SelectTrigger className="w-20 h-12">
+                    <SelectValue placeholder="Items" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="6">6</SelectItem>
+                    <SelectItem value="10">10</SelectItem>
+                    <SelectItem value="20">20</SelectItem>
+                    <SelectItem value="50">50</SelectItem>
+                    <SelectItem value="100">100</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 
@@ -965,10 +982,7 @@ export default function TenantsPage() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          {canEditTenant(tenant) && canDeleteTenant(tenant) ?
-                            getStatusBadge(tenant.status) :
-                            <span className="text-gray-400">-</span>
-                          }
+                          {getStatusBadge(tenant.status)}
                         </TableCell>
                         <TableCell>
                           <div className="text-sm">
@@ -1061,16 +1075,6 @@ export default function TenantsPage() {
                                 >
                                   <ArchiveBoxArrowDownIcon className="w-4 h-4 text-green-600" />
                                 </Button>
-                                {canDeleteTenant(tenant) && (
-                                  <Button
-                                    variant="destructive"
-                                    size="sm"
-                                    className="w-8 h-8 p-0"
-                                    onClick={() => openPermanentDeleteModal(tenant)}
-                                  >
-                                    <TrashIcon className="w-4 h-4" />
-                                  </Button>
-                                )}
                                 <Button
                                   variant="ghost"
                                   size="sm"
@@ -1081,6 +1085,16 @@ export default function TenantsPage() {
                                 >
                                   <DocumentDuplicateIcon className="w-4 h-4 text-purple-600" />
                                 </Button>
+                                {canDeleteTenant(tenant) && (
+                                  <Button
+                                    variant="destructive"
+                                    size="sm"
+                                    className="w-8 h-8 p-0"
+                                    onClick={() => openPermanentDeleteModal(tenant)}
+                                  >
+                                    <TrashIcon className="w-4 h-4" />
+                                  </Button>
+                                )}
                               </>
                             )}
                             {activeTab !== 'trash' && (
