@@ -49,7 +49,7 @@ Next.js 16 frontend application for the Multi-Tenant Platform with TypeScript an
    npm run dev
    ```
 
-The application will be available at `http://localhost:3001`
+The application will be available at `http://localhost:3000` (or as configured in .env.local)
 
 ## Available Scripts
 
@@ -63,8 +63,33 @@ The application will be available at `http://localhost:3001`
 Create a `.env.local` file in the root of the `web` directory:
 
 ```env
-NEXT_PUBLIC_API_URL=http://localhost:3000
+# Frontend Configuration
+PORT=3000
+NEXT_PUBLIC_API_URL=http://localhost:3001
+
+# Development Settings
+NEXT_PUBLIC_APP_NAME=Multi-tenant Service Hub
+NEXT_PUBLIC_APP_VERSION=1.0.0
+
+# Other Settings
+NEXT_PUBLIC_TIMEZONE=Asia/Jakarta
 ```
+
+### Port Configuration
+
+You can change the frontend port by modifying the `PORT` variable in `.env.local`:
+
+- Default port: `3000`
+- To use a different port, change `PORT=3000` to your desired port number
+- The application will automatically use the port specified in the environment variable
+
+### Available Scripts
+
+- `npm run dev` - Start development server on default port 3000
+- `npm run dev:custom` - Start development server using PORT from environment
+- `npm run build` - Build for production
+- `npm run start` - Start production server on default port 3000
+- `npm run lint` - Run ESLint
 
 ## Application Structure
 

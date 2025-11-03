@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import DashboardLayout from '@/components/layout/DashboardLayout'
-import Table from '@/components/ui/Table'
+import { Table } from '@/components/ui/Table'
 import Pagination from '@/components/ui/Pagination'
 import { permissionApi } from '@/lib/api'
 import { Permission } from '@/types'
