@@ -135,7 +135,7 @@ api.interceptors.request.use(async (config) => {
   }
 
   // Add request timestamp for monitoring
-  config.metadata = { ...config.metadata, startTime: Date.now() }
+  ;(config as any).metadata = { ...(config as any).metadata, startTime: Date.now() }
 
   return config
 })
@@ -144,7 +144,7 @@ api.interceptors.request.use(async (config) => {
 api.interceptors.response.use(
   (response) => {
     // Log successful requests for debugging
-    const duration = Date.now() - response.config.metadata?.startTime
+    const duration = Date.now() - (response.config as any).metadata?.startTime
     if (duration > 5000) { // Log slow requests
       console.log(`Slow API request: ${response.config.method?.toUpperCase()} ${response.config.url} took ${duration}ms`)
     }
@@ -326,8 +326,12 @@ export const tenantApi = {
   createTenant: async (data: {
     name: string
     slug: string
-    type: 'CORE' | 'BUSINESS' | 'PERSONAL'
-    tier?: 'STARTER' | 'PRO' | 'ENTERPRISE'
+    type: 'CORE' | 'BUSINESS' | 'TRIAL'
+    domain?: string
+    tier?: 'STARTER' | 'PROFESSIONAL' | 'ENTERPRISE' | 'CUSTOM'
+    status?: 'ACTIVE' | 'INACTIVE' | 'PENDING'
+    primaryColor?: string
+    logoUrl?: string
   }): Promise<ApiResponse<Tenant>> => {
     const response = await api.post('/api/v1/tenants', data)
     return response.data
@@ -335,6 +339,11 @@ export const tenantApi = {
 
   updateTenant: async (tenantId: string, data: Partial<Tenant>): Promise<ApiResponse<Tenant>> => {
     const response = await api.put(`/api/v1/tenants/${tenantId}`, data)
+    return response.data
+  },
+
+  deleteTenant: async (tenantId: string): Promise<ApiResponse<void>> => {
+    const response = await api.delete(`/api/v1/tenants/${tenantId}`)
     return response.data
   },
 
@@ -359,22 +368,75 @@ export const tenantApi = {
   },
 
   getTenantRoles: async (tenantId: string): Promise<ApiResponse<any[]>> => {
-    // Temporary fix: Use dashboard stats which includes roles data
-    const response = await api.get('/api/v1/tenants/dashboard/stats')
-    const dashboardData = response.data.data
-    return {
-      success: true,
-      message: 'Roles retrieved successfully',
-      data: dashboardData.roles || []
-    }
+    const response = await api.get(`/api/v1/tenants/${tenantId}/roles`)
+    return response.data
   },
-
   getDashboardStats: async (): Promise<ApiResponse<any>> => {
     const response = await api.get('/api/v1/tenants/dashboard/stats')
     return response.data
   },
-}
 
+  duplicateTenant: async (tenantId: string, data?: {
+    name?: string
+    slug?: string
+  }): Promise<ApiResponse<{
+    originalTenant: {
+      id: string
+      name: string
+      slug: string
+    }
+    duplicateTenant: {
+      id: string
+      name: string
+      slug: string
+      type: string
+      tier: string
+      status: string
+    }
+  }>> => {
+    const response = await api.post(`/api/v1/tenants/${tenantId}/duplicate`, data)
+    return response.data
+  },
+
+  archiveTenant: async (tenantId: string): Promise<ApiResponse<Tenant>> => {
+    const response = await api.post(`/api/v1/tenants/${tenantId}/archive`)
+    return response.data
+  },
+
+  unarchiveTenant: async (tenantId: string): Promise<ApiResponse<Tenant>> => {
+    const response = await api.post(`/api/v1/tenants/${tenantId}/unarchive`)
+    return response.data
+  },
+
+  getArchivedTenants: async (params?: {
+    page?: number
+    limit?: number
+    search?: string
+    sortBy?: string
+    sortOrder?: 'asc' | 'desc'
+  }): Promise<PaginatedResponse<Tenant>> => {
+    const response = await api.get('/api/v1/tenants/archived', { params })
+    return response.data
+  },
+
+  getDeletedTenants: async (params?: {
+    page?: number
+    limit?: number
+    search?: string
+    dateFrom?: string
+    dateTo?: string
+    sortBy?: string
+    sortOrder?: 'asc' | 'desc'
+  }): Promise<PaginatedResponse<Tenant>> => {
+    const response = await api.get('/api/v1/tenants/trash', { params })
+    return response.data
+  },
+
+  permanentDeleteTenant: async (tenantId: string): Promise<ApiResponse<void>> => {
+    const response = await api.delete(`/api/v1/tenants/${tenantId}/permanent`)
+    return response.data
+  },
+}
 export const permissionApi = {
   getPermissions: async (params?: {
     page?: number

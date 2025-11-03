@@ -27,6 +27,9 @@ import {
   XMarkIcon,
   BuildingOfficeIcon,
   ShieldCheckIcon,
+  ArchiveBoxIcon,
+  ArrowUturnLeftIcon,
+  ArrowPathIcon,
 } from '@heroicons/react/24/outline'
 import { TrendingUp, TrendingDown, Users, Activity } from 'lucide-react'
 
@@ -36,9 +39,12 @@ export default function UsersPage() {
   const [user, setUser] = useState<User | null>(null)
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(true)
+  const [refreshLoading, setRefreshLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
+  const [totalUsers, setTotalUsers] = useState(0)
+  const [pageSize, setPageSize] = useState(10)
   const [selectedUsers, setSelectedUsers] = useState<string[]>([])
   const [showBulkActions, setShowBulkActions] = useState(false)
   const [bulkLoading, setBulkLoading] = useState(false)
@@ -54,12 +60,12 @@ export default function UsersPage() {
   const [deleteReason, setDeleteReason] = useState('')
   const router = useRouter()
 
-  const fetchUsers = async (page = 1, search = '') => {
+  const fetchUsers = async (page = 1, search = '', newPageSize = pageSize) => {
     try {
       setLoading(true)
 
       // Check if current user is super admin
-      const currentUserRole = user?.userAssignments?.find(ut => ua.isPrimary)?.role?.level
+      const currentUserRole = user?.userTenants?.find(ut => ut.isPrimary)?.role?.level
       const isSuperAdmin = currentUserRole === 'SUPER_ADMIN'
 
       let response
@@ -67,14 +73,14 @@ export default function UsersPage() {
         case 'deleted':
           response = await adminApi.getDeletedUsers({
             page,
-            limit: 10,
+            limit: newPageSize,
             search: search || undefined
           })
           break
         case 'archived':
           response = await adminApi.getArchivedUsers({
             page,
-            limit: 10,
+            limit: newPageSize,
             search: search || undefined
           })
           break
@@ -84,15 +90,15 @@ export default function UsersPage() {
             // Super admin can see all users
             response = await adminApi.getUsers({
               page,
-              limit: 10,
+              limit: newPageSize,
               search: search || undefined
             })
           } else {
             // Regular users can only see users from their tenant
-            const currentTenantId = user?.userAssignments?.find(ut => ua.isPrimary)?.tenantId
+            const currentTenantId = user?.userTenants?.find(ut => ut.isPrimary)?.tenantId
             response = await adminApi.getUsers({
               page,
-              limit: 10,
+              limit: newPageSize,
               search: search || undefined,
               tenantId: currentTenantId
             })
@@ -100,15 +106,30 @@ export default function UsersPage() {
           break
       }
 
-      if (response.success) {
+      if (response.success && response.data && 'items' in response.data) {
         setUsers(response.data.items)
         setTotalPages(response.data.pagination.totalPages)
         setCurrentPage(response.data.pagination.page)
+        setTotalUsers(response.data.pagination.total)
       }
     } catch (error: any) {
       toast.error(error.message || 'Failed to fetch users')
     } finally {
       setLoading(false)
+    }
+  }
+
+  // Refresh data function
+  const refreshData = async () => {
+    try {
+      setRefreshLoading(true)
+      await fetchUsers(currentPage, searchTerm, pageSize)
+      await fetchUserStats()
+      toast.success('Data refreshed successfully!')
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to refresh data')
+    } finally {
+      setRefreshLoading(false)
     }
   }
 
@@ -140,9 +161,17 @@ export default function UsersPage() {
     fetchUserStats() // Fetch user statistics
   }, [router])
 
+  useEffect(() => {
+    // Reset pagination and fetch users when tab changes
+    setCurrentPage(1)
+    setSelectedUsers([])
+    setShowBulkActions(false)
+    fetchUsers(1, searchTerm, pageSize)
+  }, [activeTab])
+
   const handleSearch = (term: string) => {
     setSearchTerm(term)
-    fetchUsers(1, term)
+    fetchUsers(1, term, pageSize)
   }
 
   const handleActivateUser = async (userId: string) => {
@@ -207,15 +236,15 @@ export default function UsersPage() {
     }
   }
 
-  const handleDeleteUser = async (userId: string) => {
+  const handleArchiveUser = async (userId: string) => {
     const result = await Swal.fire({
-      title: 'Are you sure?',
-      text: "This action cannot be undone and will delete all user data.",
-      icon: 'warning',
+      title: 'Archive User?',
+      text: 'Are you sure you want to archive this user? They can be restored later.',
+      icon: 'question',
       showCancelButton: true,
-      confirmButtonColor: '#ef4444',
+      confirmButtonColor: '#f59e0b',
       cancelButtonColor: '#6b7280',
-      confirmButtonText: 'Yes, delete it!',
+      confirmButtonText: 'Yes, archive!',
       cancelButtonText: 'Cancel'
     })
 
@@ -224,12 +253,121 @@ export default function UsersPage() {
     }
 
     try {
-      const response = await adminApi.deleteUser(userId)
+      const response = await adminApi.archiveUser(userId)
       if (response.success) {
-        toast.success('User deleted successfully')
+        toast.success('User archived successfully')
         fetchUsers(currentPage, searchTerm)
         fetchUserStats()
+      } else {
+        throw new Error(response.message || 'Failed to archive user')
       }
+    } catch (error: any) {
+      console.error('Archive user error:', error)
+      toast.error(error.response?.data?.message || error.message || 'Failed to archive user')
+    }
+  }
+
+  const handleUnarchiveUser = async (userId: string) => {
+    const result = await Swal.fire({
+      title: 'Restore User?',
+      text: 'Are you sure you want to restore this user from archive?',
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonColor: '#10b981',
+      cancelButtonColor: '#6b7280',
+      confirmButtonText: 'Yes, restore!',
+      cancelButtonText: 'Cancel'
+    })
+
+    if (!result.isConfirmed) {
+      return
+    }
+
+    try {
+      const response = await adminApi.unarchiveUser(userId)
+      if (response.success) {
+        toast.success('User restored successfully')
+        fetchUsers(currentPage, searchTerm)
+        fetchUserStats()
+      } else {
+        throw new Error(response.message || 'Failed to restore user')
+      }
+    } catch (error: any) {
+      console.error('Restore user error:', error)
+      toast.error(error.response?.data?.message || error.message || 'Failed to restore user')
+    }
+  }
+
+  const handleRestoreUser = async (userId: string) => {
+    const result = await Swal.fire({
+      title: 'Restore from Trash?',
+      text: 'Are you sure you want to restore this user from trash?',
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonColor: '#10b981',
+      cancelButtonColor: '#6b7280',
+      confirmButtonText: 'Yes, restore!',
+      cancelButtonText: 'Cancel'
+    })
+
+    if (!result.isConfirmed) {
+      return
+    }
+
+    try {
+      const response = await adminApi.restoreUser(userId)
+      if (response.success) {
+        toast.success('User restored from trash successfully')
+        fetchUsers(currentPage, searchTerm)
+        fetchUserStats()
+      } else {
+        throw new Error(response.message || 'Failed to restore user')
+      }
+    } catch (error: any) {
+      console.error('Restore user error:', error)
+      toast.error(error.response?.data?.message || error.message || 'Failed to restore user')
+    }
+  }
+
+  const handleDeleteUser = async (userId: string) => {
+    const isTrashTab = activeTab === 'deleted'
+    const confirmText = isTrashTab
+      ? "This will permanently delete the user and all their data. This action cannot be undone."
+      : "This will move the user to trash. They can be restored from trash if needed."
+
+    const confirmButtonText = isTrashTab ? 'Yes, delete permanently!' : 'Yes, move to trash!'
+    const title = isTrashTab ? 'Permanently Delete User?' : 'Move User to Trash?'
+
+    const result = await Swal.fire({
+      title,
+      text: confirmText,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#ef4444',
+      cancelButtonColor: '#6b7280',
+      confirmButtonText,
+      cancelButtonText: 'Cancel'
+    })
+
+    if (!result.isConfirmed) {
+      return
+    }
+
+    try {
+      if (isTrashTab) {
+        const response = await adminApi.permanentDeleteUser(userId)
+        if (response.success) {
+          toast.success('User permanently deleted')
+        }
+      } else {
+        const response = await adminApi.deleteUser(userId)
+        if (response.success) {
+          toast.success('User moved to trash')
+        }
+      }
+
+      fetchUsers(currentPage, searchTerm)
+      fetchUserStats()
     } catch (error: any) {
       toast.error(error.message || 'Failed to delete user')
     }
@@ -252,24 +390,70 @@ export default function UsersPage() {
     }
   }
 
-  const handleBulkAction = async (action: 'activate' | 'deactivate' | 'delete') => {
+  const handleBulkAction = async (action: 'activate' | 'deactivate' | 'delete' | 'archive' | 'unarchive' | 'restore' | 'permanent-delete') => {
     if (selectedUsers.length === 0) {
       toast.error('Please select users first')
       return
     }
 
-    const actionText = action === 'delete' ? 'delete' : action
-    const confirmTitle = `Bulk ${actionText}?`
-    const confirmMessage = action === 'delete'
-      ? `Are you sure you want to delete ${selectedUsers.length} users? This action cannot be undone.`
-      : `Are you sure you want to ${action} ${selectedUsers.length} users?`
+    let actionText = action
+    let confirmTitle = ''
+    let confirmMessage = ''
+    let confirmColor = '#3b82f6'
+    let confirmIcon = 'question'
+
+    // Set action text and messages based on action type
+    switch (action) {
+      case 'activate':
+        actionText = 'activate'
+        confirmTitle = 'Bulk Activate?'
+        confirmMessage = `Are you sure you want to activate ${selectedUsers.length} users?`
+        break
+      case 'deactivate':
+        actionText = 'deactivate'
+        confirmTitle = 'Bulk Deactivate?'
+        confirmMessage = `Are you sure you want to deactivate ${selectedUsers.length} users?`
+        break
+      case 'archive':
+        actionText = 'archive'
+        confirmTitle = 'Bulk Archive?'
+        confirmMessage = `Are you sure you want to archive ${selectedUsers.length} users?`
+        confirmColor = '#f97316'
+        break
+      case 'delete':
+        actionText = 'delete' as any
+        confirmTitle = 'Bulk Move to Trash?'
+        confirmMessage = `Are you sure you want to move ${selectedUsers.length} users to trash? Users can be restored from trash.`
+        confirmColor = '#ef4444'
+        confirmIcon = 'warning'
+        break
+      case 'unarchive':
+        actionText = 'unarchive' as any
+        confirmTitle = 'Bulk Restore from Archive?'
+        confirmMessage = `Are you sure you want to restore ${selectedUsers.length} users from archive?`
+        confirmColor = '#f97316'
+        break
+      case 'restore':
+        actionText = 'restore' as any
+        confirmTitle = 'Bulk Restore from Trash?'
+        confirmMessage = `Are you sure you want to restore ${selectedUsers.length} users from trash?`
+        confirmColor = '#10b981'
+        break
+      case 'permanent-delete':
+        actionText = 'permanent-delete' as any
+        confirmTitle = 'Bulk Permanent Delete?'
+        confirmMessage = `Are you sure you want to permanently delete ${selectedUsers.length} users? This action cannot be undone and all data will be lost!`
+        confirmColor = '#dc2626'
+        confirmIcon = 'error'
+        break
+    }
 
     const result = await Swal.fire({
       title: confirmTitle,
       text: confirmMessage,
-      icon: action === 'delete' ? 'warning' : 'question',
+      icon: confirmIcon as any,
       showCancelButton: true,
-      confirmButtonColor: action === 'delete' ? '#ef4444' : '#3b82f6',
+      confirmButtonColor: confirmColor,
       cancelButtonColor: '#6b7280',
       confirmButtonText: `Yes, ${actionText} them!`,
       cancelButtonText: 'Cancel'
@@ -281,22 +465,67 @@ export default function UsersPage() {
 
     try {
       setBulkLoading(true)
-      const response = await adminApi.bulkActionUsers(action, selectedUsers)
+
+      // Handle different API calls based on action
+      let response
+      let successful = 0
+      let failed = 0
+
+      if (action === 'permanent-delete') {
+        // Handle permanent delete - need to call multiple individual delete calls
+        for (const userId of selectedUsers) {
+          try {
+            await adminApi.permanentDeleteUser(userId)
+            successful++
+          } catch (error) {
+            failed++
+          }
+        }
+        response = { success: true }
+      } else if (action === 'unarchive') {
+        // Handle unarchive - call individual unarchive calls
+        for (const userId of selectedUsers) {
+          try {
+            await adminApi.unarchiveUser(userId)
+            successful++
+          } catch (error) {
+            failed++
+          }
+        }
+        response = { success: true }
+      } else if (action === 'restore') {
+        // Handle restore - call individual restore calls
+        for (const userId of selectedUsers) {
+          try {
+            await adminApi.restoreUser(userId)
+            successful++
+          } catch (error) {
+            failed++
+          }
+        }
+        response = { success: true }
+      } else {
+        // Use bulk API for activate, deactivate, delete
+        response = await adminApi.bulkActionUsers(action, selectedUsers)
+        if (response.success) {
+          successful = response.data.summary.successful
+          failed = response.data.summary.failed
+        }
+      }
 
       if (response.success) {
-        const { summary } = response.data
-        const successIcon = action === 'delete' ? 'error' : 'success'
+        const successIcon = action === 'permanent-delete' ? 'error' : 'success'
 
         await Swal.fire({
           icon: successIcon,
           title: 'Action Completed',
-          text: `Bulk ${action} completed: ${summary.successful} successful, ${summary.failed} failed`,
+          text: `Bulk ${actionText} completed: ${successful} successful, ${failed} failed`,
           confirmButtonColor: '#10b981',
         })
 
         // Refresh data
-        fetchUsers(currentPage, searchTerm)
-        fetchUserStats()
+        await fetchUsers(currentPage, searchTerm)
+        await fetchUserStats()
         setSelectedUsers([])
         setShowBulkActions(false)
       }
@@ -315,8 +544,8 @@ export default function UsersPage() {
   // Duplicate user handler
   const handleDuplicateUser = async (userToDuplicate: any) => {
     // Check if user has tenants and roles
-    const hasValidTenants = userToDuplicate.userAssignments && userToDuplicate.userAssignments.length > 0
-    const hasValidRoles = hasValidTenants && userToDuplicate.userAssignments.some((ut: any) => ua.roleId)
+    const hasValidTenants = userToDuplicate.userTenants && userToDuplicate.userTenants.length > 0
+    const hasValidRoles = hasValidTenants && userToDuplicate.userTenants.some((ut: any) => ut.roleId)
 
     if (!hasValidTenants || !hasValidRoles) {
       await Swal.fire({
@@ -394,9 +623,9 @@ export default function UsersPage() {
     if (newEmail) {
       try {
         // Get the primary tenant and role from the user being duplicated
-        const primaryUserTenant = userToDuplicate.userAssignments?.find((ut: any) => ua.isPrimary)
-        const tenantId = primaryUserTenant?.tenantId || userToDuplicate.userAssignments?.[0]?.tenantId
-        const roleId = primaryUserTenant?.roleId || userToDuplicate.userAssignments?.[0]?.roleId
+        const primaryUserTenant = userToDuplicate.userTenants?.find((ut: any) => ut.isPrimary)
+        const tenantId = primaryUserTenant?.tenantId || userToDuplicate.userTenants?.[0]?.tenantId
+        const roleId = primaryUserTenant?.roleId || userToDuplicate.userTenants?.[0]?.roleId
 
         // Additional validation
         if (!tenantId || !roleId) {
@@ -525,6 +754,7 @@ export default function UsersPage() {
   const [addUserForm, setAddUserForm] = useState({
     name: '',
     email: '',
+    password: '',
     phone: '',
     timezone: 'UTC',
     language: 'en',
@@ -559,7 +789,7 @@ export default function UsersPage() {
       setRolesLoading(true)
       const response = await tenantApi.getTenantRoles(tenantId)
 
-      if (response.success) {
+      if (response.success && response.data) {
         setAvailableRoles(response.data)
       } else {
         throw new Error(response.message || 'Failed to fetch roles')
@@ -606,29 +836,91 @@ export default function UsersPage() {
   // Edit user handlers
   const handleEditUser = async (userItem: any) => {
     setSelectedEditUser(userItem)
+    setEditUserLoading(true)
 
-    // Use home tenant as default, fallback to primary tenant if home tenant is not set
-    const defaultTenantId = userItem.homeTenantId || userItem.userAssignments?.find((ut: any) => ua.isPrimary)?.tenantId || ''
-    const defaultRoleId = userItem.userAssignments?.find((ut: any) => ua.tenantId === defaultTenantId)?.roleId || ''
+    try {
+      // First fetch all available tenants to ensure they are loaded before setting form data
+      try {
+        setTenantsLoading(true)
+        const response = await tenantApi.getTenants()
 
-    // First fetch roles for the user's home/primary tenant
-    if (defaultTenantId) {
-      await fetchEditRolesForTenant(defaultTenantId)
+        if (response.success) {
+          setAvailableTenants(response.data.items || response.data)
+        } else {
+          throw new Error(response.message || 'Failed to fetch tenants')
+        }
+      } catch (error: any) {
+        console.error('Failed to fetch tenants:', error)
+        toast.error(error.message || 'Failed to fetch tenants')
+        setAvailableTenants([])
+      } finally {
+        setTenantsLoading(false)
+      }
+
+      // Use home tenant as default, fallback to primary tenant if home tenant is not set
+      console.log('User assignments:', userItem.userTenants)
+      const primaryAssignment = userItem.userTenants?.find((ut: any) => ut.isPrimary)
+      const firstAssignment = userItem.userTenants?.[0]
+
+      // Try to get tenant ID from multiple sources
+      let defaultTenantId = userItem.homeTenantId || ''
+
+      if (primaryAssignment) {
+        defaultTenantId = primaryAssignment.tenant?.id || primaryAssignment.tenantId || ''
+      } else if (firstAssignment) {
+        defaultTenantId = firstAssignment.tenant?.id || firstAssignment.tenantId || ''
+      }
+
+      const defaultRoleId = primaryAssignment?.roleId || firstAssignment?.roleId || ''
+
+      console.log('Primary assignment:', primaryAssignment)
+      console.log('First assignment:', firstAssignment)
+      console.log('Final default tenant ID:', defaultTenantId)
+      console.log('Final default role ID:', defaultRoleId)
+
+      // First fetch roles for the user's home/primary tenant
+      if (defaultTenantId) {
+        await fetchEditRolesForTenant(defaultTenantId)
+      }
+
+      // Then set the form data with a delay to ensure both tenants and roles are loaded
+      setTimeout(() => {
+        // Debug: log the structures to understand the data
+        console.log('User item:', userItem)
+        console.log('Default tenant ID:', defaultTenantId)
+        console.log('Available tenants:', availableTenants)
+        console.log('Default role ID:', defaultRoleId)
+        console.log('Available roles:', editAvailableRoles)
+
+        // Find the tenant in availableTenants to get the correct ID
+        const matchedTenant = availableTenants.find((t: any) => {
+          // Try multiple ways to match the tenant
+          return t.id === defaultTenantId
+        })
+
+        const finalTenantId = matchedTenant ? matchedTenant.id : defaultTenantId
+        console.log('Matched tenant:', matchedTenant)
+        console.log('Final tenant ID:', finalTenantId)
+
+        setEditUserForm({
+          name: userItem.name,
+          email: userItem.email,
+          password: '',
+          phone: userItem.phone || '',
+          timezone: userItem.timezone || 'UTC',
+          language: userItem.language || 'en',
+          status: userItem.status,
+          tenantId: finalTenantId,
+          roleId: defaultRoleId
+        })
+        setEditUserLoading(false)
+        setShowEditUser(true)
+      }, 500) // Increased delay to ensure both tenants and roles are loaded
+    } catch (error) {
+      console.error('Error preparing edit form:', error)
+      setEditUserLoading(false)
+      toast.error('Failed to prepare edit form')
     }
-
-    // Then set the form data (this ensures roles are loaded before setting roleId)
-    setEditUserForm({
-      name: userItem.name,
-      email: userItem.email,
-      phone: userItem.phone || '',
-      timezone: userItem.timezone || 'UTC',
-      language: userItem.language || 'en',
-      status: userItem.status,
-      tenantId: defaultTenantId,
-      roleId: defaultRoleId
-    })
-
-    setShowEditUser(true)
   }
 
   // Fetch roles for edit form
@@ -642,8 +934,17 @@ export default function UsersPage() {
       setEditRolesLoading(true)
       const response = await tenantApi.getTenantRoles(tenantId)
 
-      if (response.success) {
+      if (response.success && response.data) {
         setEditAvailableRoles(response.data)
+
+        // Check if the current selected roleId exists in the loaded roles
+        if (editUserForm.roleId) {
+          const roleExists = response.data.some((role: any) => role.id === editUserForm.roleId)
+          if (!roleExists && response.data.length > 0) {
+            // If selected role doesn't exist, clear it or set to first available role
+            setEditUserForm(prev => ({ ...prev, roleId: '' }))
+          }
+        }
       } else {
         throw new Error(response.message || 'Failed to fetch roles')
       }
@@ -667,7 +968,7 @@ export default function UsersPage() {
 
     // Clear error for tenant and role fields
     if (editUserErrors.tenantId || editUserErrors.roleId) {
-      setEditUserErrors(prev => {
+      setEditUserErrors((prev: any) => {
         const newErrors = { ...prev }
         delete newErrors.tenantId
         delete newErrors.roleId
@@ -681,7 +982,7 @@ export default function UsersPage() {
     setEditUserForm(prev => ({ ...prev, [field]: value }))
     // Clear error for this field if it exists
     if (editUserErrors[field]) {
-      setEditUserErrors(prev => {
+      setEditUserErrors((prev: any) => {
         const newErrors = { ...prev }
         delete newErrors[field]
         return newErrors
@@ -693,6 +994,7 @@ export default function UsersPage() {
   const [editUserForm, setEditUserForm] = useState({
     name: '',
     email: '',
+    password: '',
     phone: '',
     timezone: 'UTC',
     language: 'en',
@@ -725,6 +1027,12 @@ export default function UsersPage() {
       errors.email = 'Email address is required'
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addUserForm.email)) {
       errors.email = 'Please enter a valid email address'
+    }
+
+    if (!addUserForm.password.trim()) {
+      errors.password = 'Password is required'
+    } else if (addUserForm.password.length < 6) {
+      errors.password = 'Password must be at least 6 characters'
     }
 
     if (!addUserForm.tenantId) {
@@ -779,7 +1087,7 @@ export default function UsersPage() {
     setAddUserForm(prev => ({ ...prev, [field]: value }))
     // Clear error for this field if it exists
     if (addUserErrors[field]) {
-      setAddUserErrors(prev => {
+      setAddUserErrors((prev: any) => {
         const newErrors = { ...prev }
         delete newErrors[field]
         return newErrors
@@ -815,6 +1123,7 @@ export default function UsersPage() {
         setAddUserForm({
           name: '',
           email: '',
+          password: '',
           phone: '',
           timezone: 'UTC',
           language: 'en',
@@ -869,7 +1178,7 @@ export default function UsersPage() {
 
       // Update form errors if field-specific errors exist
       if (Object.keys(fieldErrors).length > 0) {
-        setAddUserErrors(prevErrors => ({ ...prevErrors, ...fieldErrors }))
+        setAddUserErrors((prevErrors: any) => ({ ...prevErrors, ...fieldErrors }))
       }
 
       // Show general error message
@@ -891,21 +1200,35 @@ export default function UsersPage() {
 
     setEditUserLoading(true)
     try {
-      // TODO: Implement actual user update API call
-      // For now, we'll simulate the API call
-      await new Promise(resolve => setTimeout(resolve, 1000))
+      // Call actual API to update user
+      const updateData: any = {
+        name: editUserForm.name.trim(),
+        email: editUserForm.email.trim(),
+        phone: editUserForm.phone.trim() || undefined,
+        timezone: editUserForm.timezone,
+        language: editUserForm.language,
+        status: editUserForm.status,
+        tenantId: editUserForm.tenantId,
+        roleId: editUserForm.roleId
+      }
 
-      // Simulate API success
-      toast.success('User updated successfully!')
+  
+      const response = await adminApi.updateUser(selectedEditUser.id, updateData)
 
-      // Reset form and close modal
-      setEditUserErrors({})
-      setShowEditUser(false)
-      setSelectedEditUser(null)
+      if (response.success) {
+        toast.success('User updated successfully!')
 
-      // Refresh only the table data and statistics
-      await fetchUsers(currentPage, searchTerm)
-      await fetchUserStats()
+        // Reset form and close modal
+        setEditUserErrors({})
+        setShowEditUser(false)
+        setSelectedEditUser(null)
+
+        // Refresh only the table data and statistics
+        await fetchUsers(currentPage, searchTerm)
+        await fetchUserStats()
+      } else {
+        throw new Error(response.message || 'Failed to update user')
+      }
 
     } catch (error: any) {
       toast.error(error.message || 'Failed to update user')
@@ -966,10 +1289,21 @@ export default function UsersPage() {
               <h1 className="text-2xl sm:text-3xl font-black text-gradient mb-2 break-words">User Management</h1>
               <p className="text-gray-600 text-sm sm:text-lg">Manage platform users and permissions</p>
             </div>
-            <Button className="btn-gradient w-full sm:w-auto" onClick={handleAddUser}>
-              <PlusIcon className="w-4 h-4 mr-2" />
-              Add User
-            </Button>
+            <div className="flex gap-2 w-full sm:w-auto">
+              <Button
+                variant="outline"
+                className="w-full sm:w-auto border-gray-300 hover:bg-gray-50"
+                onClick={refreshData}
+                disabled={refreshLoading}
+              >
+                <ArrowPathIcon className={`w-4 h-4 mr-2 ${refreshLoading ? 'animate-spin' : ''}`} />
+                {refreshLoading ? 'Refreshing...' : 'Refresh'}
+              </Button>
+              <Button className="btn-gradient w-full sm:w-auto" onClick={handleAddUser}>
+                <PlusIcon className="w-4 h-4 mr-2" />
+                Add User
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -1111,35 +1445,107 @@ export default function UsersPage() {
                 </div>
 
                 <div className="flex flex-wrap gap-3">
-                  <Button
-                    variant="outline"
-                    onClick={() => handleBulkAction('activate')}
-                    disabled={bulkLoading || selectedUsers.length === 0}
-                    className="flex items-center space-x-2"
-                  >
-                    <CheckCircleIcon className="w-4 h-4" />
-                    <span>Activate Selected</span>
-                  </Button>
+                  {activeTab === 'active' && (
+                    <>
+                      <Button
+                        variant="outline"
+                        onClick={() => handleBulkAction('activate')}
+                        disabled={bulkLoading || selectedUsers.length === 0}
+                        className="flex items-center space-x-2"
+                      >
+                        <CheckCircleIcon className="w-4 h-4" />
+                        <span>Activate Selected</span>
+                      </Button>
 
-                  <Button
-                    variant="outline"
-                    onClick={() => handleBulkAction('deactivate')}
-                    disabled={bulkLoading || selectedUsers.length === 0}
-                    className="flex items-center space-x-2"
-                  >
-                    <XCircleIcon className="w-4 h-4" />
-                    <span>Deactivate Selected</span>
-                  </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => handleBulkAction('deactivate')}
+                        disabled={bulkLoading || selectedUsers.length === 0}
+                        className="flex items-center space-x-2"
+                      >
+                        <XCircleIcon className="w-4 h-4" />
+                        <span>Deactivate Selected</span>
+                      </Button>
 
-                  <Button
-                    variant="outline"
-                    onClick={() => handleBulkAction('delete')}
-                    disabled={bulkLoading || selectedUsers.length === 0}
-                    className="flex items-center space-x-2 text-red-600 hover:text-red-700"
-                  >
-                    <TrashIcon className="w-4 h-4" />
-                    <span>Delete Selected</span>
-                  </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => handleBulkAction('archive')}
+                        disabled={bulkLoading || selectedUsers.length === 0}
+                        className="flex items-center space-x-2 text-orange-600 hover:text-orange-700"
+                      >
+                        <ArchiveBoxIcon className="w-4 h-4" />
+                        <span>Archive Selected</span>
+                      </Button>
+
+                      <Button
+                        variant="outline"
+                        onClick={() => handleBulkAction('delete')}
+                        disabled={bulkLoading || selectedUsers.length === 0}
+                        className="flex items-center space-x-2 text-yellow-600 hover:text-yellow-700"
+                      >
+                        <TrashIcon className="w-4 h-4" />
+                        <span>Move to Trash</span>
+                      </Button>
+
+                      <Button
+                        variant="outline"
+                        onClick={() => handleBulkAction('permanent-delete')}
+                        disabled={bulkLoading || selectedUsers.length === 0}
+                        className="flex items-center space-x-2 text-red-600 hover:text-red-700"
+                      >
+                        <TrashIcon className="w-4 h-4" />
+                        <span>Permanent Delete</span>
+                      </Button>
+                    </>
+                  )}
+
+                  {activeTab === 'archived' && (
+                    <>
+                      <Button
+                        variant="outline"
+                        onClick={() => handleBulkAction('unarchive')}
+                        disabled={bulkLoading || selectedUsers.length === 0}
+                        className="flex items-center space-x-2 text-orange-600 hover:text-orange-700"
+                      >
+                        <ArrowUturnLeftIcon className="w-4 h-4" />
+                        <span>Restore from Archive</span>
+                      </Button>
+
+                      <Button
+                        variant="outline"
+                        onClick={() => handleBulkAction('delete')}
+                        disabled={bulkLoading || selectedUsers.length === 0}
+                        className="flex items-center space-x-2 text-red-600 hover:text-red-700"
+                      >
+                        <TrashIcon className="w-4 h-4" />
+                        <span>Move to Trash</span>
+                      </Button>
+                    </>
+                  )}
+
+                  {activeTab === 'deleted' && (
+                    <>
+                      <Button
+                        variant="outline"
+                        onClick={() => handleBulkAction('restore')}
+                        disabled={bulkLoading || selectedUsers.length === 0}
+                        className="flex items-center space-x-2 text-green-600 hover:text-green-700"
+                      >
+                        <ArrowUturnLeftIcon className="w-4 h-4" />
+                        <span>Restore from Trash</span>
+                      </Button>
+
+                      <Button
+                        variant="outline"
+                        onClick={() => handleBulkAction('permanent-delete')}
+                        disabled={bulkLoading || selectedUsers.length === 0}
+                        className="flex items-center space-x-2 text-red-600 hover:text-red-700"
+                      >
+                        <TrashIcon className="w-4 h-4" />
+                        <span>Permanent Delete</span>
+                      </Button>
+                    </>
+                  )}
 
                   <Button
                     variant="ghost"
@@ -1161,15 +1567,99 @@ export default function UsersPage() {
           </Card>
         )}
 
-        {/* Users Table */}
+        {/* Users Table with Tabs */}
         <Card className="border-0 shadow-lg">
           <CardHeader>
-            <CardTitle className="text-xl font-bold text-gray-900">
-              All Users ({users.length})
-            </CardTitle>
-            <CardDescription>
-              Manage user accounts, roles, and permissions
-            </CardDescription>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <CardTitle className="text-xl font-bold text-gray-900">
+                  User Management
+                </CardTitle>
+                <CardDescription>
+                  Manage user accounts, roles, and permissions
+                </CardDescription>
+              </div>
+              <div className="flex items-center space-x-2">
+                <span className="text-sm text-gray-500">
+                  Total: {userStats?.overview?.totalUsers || 0} users
+                </span>
+              </div>
+            </div>
+
+            {/* Tabs */}
+            <div className="flex space-x-1 border-b border-gray-200 mt-4">
+              <button
+                onClick={() => setActiveTab('active')}
+                className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+                  activeTab === 'active'
+                    ? 'text-blue-600 bg-blue-50 border-b-2 border-blue-600'
+                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                <div className="flex items-center space-x-2">
+                  <Users className="w-4 h-4" />
+                  <span>List Users</span>
+                  <Badge className={
+                    activeTab === 'active'
+                      ? 'bg-blue-100 text-blue-800'
+                      : 'bg-gray-100 text-gray-600'
+                  }>
+                    {activeTab === 'active'
+                      ? (totalUsers || 0)
+                      : (userStats?.userStats?.byStatus?.find((s: any) => s.status === 'ACTIVE')?.count || 0)
+                    }
+                  </Badge>
+                </div>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('archived')}
+                className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+                  activeTab === 'archived'
+                    ? 'text-orange-600 bg-orange-50 border-b-2 border-orange-600'
+                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                <div className="flex items-center space-x-2">
+                  <ArchiveBoxIcon className="w-4 h-4" />
+                  <span>Archived</span>
+                  <Badge className={
+                    activeTab === 'archived'
+                      ? 'bg-orange-100 text-orange-800'
+                      : 'bg-gray-100 text-gray-600'
+                  }>
+                    {activeTab === 'archived'
+                      ? (totalUsers || 0)
+                      : (userStats?.userStats?.byStatus?.find((s: any) => s.status === 'ARCHIVED')?.count || 0)
+                    }
+                  </Badge>
+                </div>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('deleted')}
+                className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+                  activeTab === 'deleted'
+                    ? 'text-red-600 bg-red-50 border-b-2 border-red-600'
+                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                <div className="flex items-center space-x-2">
+                  <TrashIcon className="w-4 h-4" />
+                  <span>Trash</span>
+                  <Badge className={
+                    activeTab === 'deleted'
+                      ? 'bg-red-100 text-red-800'
+                      : 'bg-gray-100 text-gray-600'
+                  }>
+                    {activeTab === 'deleted'
+                      ? (totalUsers || 0)
+                      : (userStats?.userStats?.byStatus?.find((s: any) => s.status === 'DELETED')?.count || 0)
+                    }
+                  </Badge>
+                </div>
+              </button>
+            </div>
           </CardHeader>
           <CardContent>
             {loading ? (
@@ -1195,6 +1685,12 @@ export default function UsersPage() {
                       <th className="text-left py-3 px-2 sm:px-4 font-semibold text-gray-700">Tenant</th>
                       <th className="text-left py-3 px-2 sm:px-4 font-semibold text-gray-700">Role</th>
                       <th className="text-left py-3 px-2 sm:px-4 font-semibold text-gray-700 hidden lg:table-cell">Status</th>
+                      {activeTab === 'deleted' && (
+                        <th className="text-left py-3 px-2 sm:px-4 font-semibold text-gray-700 hidden md:table-cell">Deleted Date</th>
+                      )}
+                      {activeTab === 'archived' && (
+                        <th className="text-left py-3 px-2 sm:px-4 font-semibold text-gray-700 hidden md:table-cell">Archived Date</th>
+                      )}
                       <th className="text-left py-3 px-2 sm:px-4 font-semibold text-gray-700 hidden md:table-cell">Email</th>
                       <th className="text-center py-3 px-2 sm:px-4 font-semibold text-gray-700">Actions</th>
                     </tr>
@@ -1204,16 +1700,18 @@ export default function UsersPage() {
                       <tr key={userItem.id} className={`border-b border-gray-100 hover:bg-gray-50 transition-colors ${selectedUsers.includes(userItem.id) ? 'bg-blue-50' : ''}`}>
                         {/* Nomor Urut */}
                         <td className="py-3 px-2 sm:px-4 text-sm text-gray-600 font-medium">
-                          {((currentPage - 1) * 10) + index + 1}
+                          {((currentPage - 1) * pageSize) + index + 1}
                         </td>
                         {/* Checkbox */}
                         <td className="py-3 px-2 sm:px-4">
-                          <input
-                            type="checkbox"
-                            checked={selectedUsers.includes(userItem.id)}
-                            onChange={() => handleSelectUser(userItem.id)}
-                            className="w-4 h-4 text-primary border-gray-300 rounded focus:ring-primary"
-                          />
+                          {userItem.id !== user?.id && (
+                            <input
+                              type="checkbox"
+                              checked={selectedUsers.includes(userItem.id)}
+                              onChange={() => handleSelectUser(userItem.id)}
+                              className="w-4 h-4 text-primary border-gray-300 rounded focus:ring-primary"
+                            />
+                          )}
                         </td>
                         {/* User Info - Desktop */}
                         <td className="py-3 px-2 sm:px-4 hidden sm:table-cell">
@@ -1224,21 +1722,21 @@ export default function UsersPage() {
                         </td>
                         {/* Tenant */}
                         <td className="py-3 px-2 sm:px-4">
-                          {userItem.userAssignments && userItem.userAssignments.length > 0 ? (
+                          {userItem.userTenants && userItem.userTenants.length > 0 ? (
                             <div className="space-y-1">
-                              {userItem.userAssignments.map((ua, index) => (
+                              {userItem.userTenants.map((ua, index) => (
                                 <div key={index} className="flex items-center space-x-1">
                                   <Badge
                                     className={`${
-                                      ua.tenant.type === 'CORE' ? 'bg-purple-100 text-purple-800' :
-                                      ua.tenant.type === 'BUSINESS' ? 'bg-blue-100 text-blue-800' :
+                                      ua.tenant?.type === 'BUSINESS' ? 'bg-blue-100 text-blue-800' :
+                                      ua.tenant?.type === 'CORE' ? 'bg-purple-100 text-purple-800' :
                                       'bg-green-100 text-green-800'
                                     } text-xs`}
                                   >
-                                    {ua.tenant.type}
+                                    {ua.tenant?.type}
                                   </Badge>
                                   <span className="text-xs text-gray-600 truncate max-w-[100px] font-medium">
-                                    {ua.tenant.name}
+                                    {ua.tenant?.name}
                                   </span>
                                   {ua.isPrimary && (
                                     <Badge className="bg-yellow-100 text-yellow-800 text-xs">Primary</Badge>
@@ -1252,13 +1750,13 @@ export default function UsersPage() {
                         </td>
                         {/* Role */}
                         <td className="py-3 px-2 sm:px-4">
-                          {userItem.userAssignments && userItem.userAssignments.length > 0 ? (
+                          {userItem.userTenants && userItem.userTenants.length > 0 ? (
                             <div className="space-y-1">
-                              {userItem.userAssignments.map((ua, index) => (
+                              {userItem.userTenants.map((ua, index) => (
                                 <div key={index} className="flex items-center space-x-1">
                                   <ShieldCheckIcon className="w-3 h-3 text-gray-400" />
                                   <Badge className="bg-gray-100 text-gray-700 text-xs">
-                                    {ua.role?.displayName || ua.role?.name}
+                                    {ua.role?.name}
                                   </Badge>
                                   <Badge className="bg-blue-50 text-blue-700 text-xs">
                                     {ua.role?.level}
@@ -1277,17 +1775,38 @@ export default function UsersPage() {
                             {getStatusBadge(userItem.status)}
                           </div>
                         </td>
-                        {/* Email - Desktop */}
-                        <td className="py-3 px-2 sm:px-4 hidden md:table-cell">
-                          <div className="text-xs text-gray-600 truncate max-w-[150px]">
-                            {userItem.email}
-                          </div>
-                          <Badge className={`mt-1 ${
-                            userItem.emailVerified ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800"
-                          } text-xs`}>
-                            {userItem.emailVerified ? "✓ Verified" : "○ Pending"}
-                          </Badge>
-                        </td>
+                        {/* Status/Date Info - Desktop */}
+                        {(activeTab === 'deleted' || activeTab === 'archived') ? (
+                          <td className="py-3 px-2 sm:px-4 hidden md:table-cell">
+                            <div className="text-xs text-gray-600">
+                              {activeTab === 'deleted' && userItem.deletedAt && (
+                                <div>
+                                  <div className="font-medium text-red-600">Deleted</div>
+                                  <div>{new Date(userItem.deletedAt).toLocaleDateString()}</div>
+                                  <div className="text-gray-400">{new Date(userItem.deletedAt).toLocaleTimeString()}</div>
+                                </div>
+                              )}
+                              {activeTab === 'archived' && userItem.archivedAt && (
+                                <div>
+                                  <div className="font-medium text-orange-600">Archived</div>
+                                  <div>{new Date(userItem.archivedAt).toLocaleDateString()}</div>
+                                  <div className="text-gray-400">{new Date(userItem.archivedAt).toLocaleTimeString()}</div>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        ) : (
+                          <td className="py-3 px-2 sm:px-4 hidden md:table-cell">
+                            <div className="text-xs text-gray-600 truncate max-w-[150px]">
+                              {userItem.email}
+                            </div>
+                            <Badge className={`mt-1 ${
+                              userItem.emailVerified ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800"
+                            } text-xs`}>
+                              {userItem.emailVerified ? "✓ Verified" : "○ Pending"}
+                            </Badge>
+                          </td>
+                        )}
                         {/* Actions */}
                         <td className="py-3 px-2 sm:px-4">
                           <div className="flex items-center justify-center space-x-1">
@@ -1300,68 +1819,207 @@ export default function UsersPage() {
                             >
                               <EyeIcon className="w-4 h-4 text-blue-600" />
                             </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 w-8 p-0 hover:bg-gray-50"
-                              onClick={() => handleEditUser(userItem)}
-                              title="Edit User"
-                            >
-                              <PencilIcon className="w-4 h-4 text-gray-600" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 w-8 p-0 hover:bg-purple-50"
-                              onClick={() => handleDuplicateUser(userItem)}
-                              title="Duplicate User"
-                            >
-                              <DocumentArrowDownIcon className="w-4 h-4 text-purple-600" />
-                            </Button>
-                            {(userItem.status === 'PENDING' || userItem.status === 'INACTIVE') ? (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-8 w-8 p-0 hover:bg-green-50"
-                                onClick={() => handleActivateUser(userItem.id)}
-                                disabled={userItem.id === user?.id}
-                                title={userItem.status === 'PENDING' ? 'Activate User' : 'Reactivate User'}
-                              >
-                                <CheckCircleIcon className="w-4 h-4 text-green-600" />
-                              </Button>
-                            ) : userItem.status === 'ACTIVE' ? (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-8 w-8 p-0 hover:bg-red-50"
-                                onClick={() => handleDeactivateUser(userItem.id)}
-                                disabled={userItem.id === user?.id}
-                                title="Deactivate User"
-                              >
-                                <XCircleIcon className="w-4 h-4 text-red-600" />
-                              </Button>
-                            ) : null}
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 w-8 p-0 hover:bg-red-50"
-                              onClick={() => handleDeleteUser(userItem.id)}
-                              disabled={userItem.id === user?.id}
-                              title="Delete User"
-                            >
-                              <TrashIcon className="w-4 h-4 text-red-600" />
-                            </Button>
+
+                            {activeTab === 'active' && (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 w-8 p-0 hover:bg-gray-50"
+                                  onClick={() => handleEditUser(userItem)}
+                                  title="Edit User"
+                                >
+                                  <PencilIcon className="w-4 h-4 text-gray-600" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 w-8 p-0 hover:bg-purple-50"
+                                  onClick={() => handleDuplicateUser(userItem)}
+                                  title="Duplicate User"
+                                >
+                                  <DocumentArrowDownIcon className="w-4 h-4 text-purple-600" />
+                                </Button>
+                                {(userItem.status === 'PENDING' || userItem.status === 'INACTIVE') ? (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-8 w-8 p-0 hover:bg-green-50"
+                                    onClick={() => handleActivateUser(userItem.id)}
+                                    disabled={userItem.id === user?.id}
+                                    title={userItem.status === 'PENDING' ? 'Activate User' : 'Reactivate User'}
+                                  >
+                                    <CheckCircleIcon className="w-4 h-4 text-green-600" />
+                                  </Button>
+                                ) : userItem.status === 'ACTIVE' ? (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-8 w-8 p-0 hover:bg-red-50"
+                                    onClick={() => handleDeactivateUser(userItem.id)}
+                                    disabled={userItem.id === user?.id}
+                                    title="Deactivate User"
+                                  >
+                                    <XCircleIcon className="w-4 h-4 text-red-600" />
+                                  </Button>
+                                ) : null}
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 w-8 p-0 hover:bg-orange-50"
+                                  onClick={() => handleArchiveUser(userItem.id)}
+                                  disabled={userItem.id === user?.id}
+                                  title="Archive User"
+                                >
+                                  <ArchiveBoxIcon className="w-4 h-4 text-orange-600" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 w-8 p-0 hover:bg-red-50"
+                                  onClick={() => handleDeleteUser(userItem.id)}
+                                  disabled={userItem.id === user?.id}
+                                  title="Move to Trash"
+                                >
+                                  <TrashIcon className="w-4 h-4 text-red-600" />
+                                </Button>
+                              </>
+                            )}
+
+                            {activeTab === 'archived' && (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 w-8 p-0 hover:bg-green-50"
+                                  onClick={() => handleUnarchiveUser(userItem.id)}
+                                  title="Restore from Archive"
+                                >
+                                  <ArrowUturnLeftIcon className="w-4 h-4 text-green-600" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 w-8 p-0 hover:bg-red-50"
+                                  onClick={() => handleDeleteUser(userItem.id)}
+                                  disabled={userItem.id === user?.id}
+                                  title="Move to Trash"
+                                >
+                                  <TrashIcon className="w-4 h-4 text-red-600" />
+                                </Button>
+                              </>
+                            )}
+
+                            {activeTab === 'deleted' && (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 w-8 p-0 hover:bg-green-50"
+                                  onClick={() => handleRestoreUser(userItem.id)}
+                                  title="Restore from Trash"
+                                >
+                                  <ArrowUturnLeftIcon className="w-4 h-4 text-green-600" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 w-8 p-0 hover:bg-red-50"
+                                  onClick={() => handleDeleteUser(userItem.id)}
+                                  disabled={userItem.id === user?.id}
+                                  title="Permanently Delete"
+                                >
+                                  <TrashIcon className="w-4 h-4 text-red-600" />
+                                </Button>
+                              </>
+                            )}
                           </div>
                         </td>
                       </tr>
                     ))}
+
+                    {/* Empty State */}
+                    {displayUsers.length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="py-12 text-center">
+                          <div className="flex flex-col items-center justify-center space-y-4">
+                            {activeTab === 'active' && (
+                              <>
+                                <Users className="w-16 h-16 text-gray-300" />
+                                <div>
+                                  <h3 className="text-lg font-medium text-gray-900">No active users found</h3>
+                                  <p className="mt-1 text-sm text-gray-500">
+                                    {searchTerm ? 'Try adjusting your search terms' : 'Get started by adding your first user'}
+                                  </p>
+                                </div>
+                                {!searchTerm && (
+                                  <Button
+                                    onClick={() => setShowAddUser(true)}
+                                    className="mt-4"
+                                  >
+                                    <PlusIcon className="w-4 h-4 mr-2" />
+                                    Add User
+                                  </Button>
+                                )}
+                              </>
+                            )}
+                            {activeTab === 'archived' && (
+                              <>
+                                <ArchiveBoxIcon className="w-16 h-16 text-orange-300" />
+                                <div>
+                                  <h3 className="text-lg font-medium text-gray-900">No archived users</h3>
+                                  <p className="mt-1 text-sm text-gray-500">
+                                    Users will appear here when they are archived from the active users list
+                                  </p>
+                                </div>
+                              </>
+                            )}
+                            {activeTab === 'deleted' && (
+                              <>
+                                <TrashIcon className="w-16 h-16 text-red-300" />
+                                <div>
+                                  <h3 className="text-lg font-medium text-gray-900">Trash is empty</h3>
+                                  <p className="mt-1 text-sm text-gray-500">
+                                    Deleted users will appear here for 30 days before permanent removal
+                                  </p>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
-                {totalPages > 1 && (
-                  <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-200">
+                {/* Always show page size controls and info */}
+                <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-200">
+                  <div className="flex items-center space-x-4">
                     <div className="text-sm text-gray-600">
-                      Showing {((currentPage - 1) * 10) + 1} to {Math.min(currentPage * 10, users.length)} of {users.length} users
+                      Showing {((currentPage - 1) * pageSize) + 1} to {Math.min(currentPage * pageSize, users.length)} of {users.length} users
                     </div>
+                    <div className="flex items-center space-x-2">
+                      <span className="text-sm text-gray-600">Show</span>
+                      <select
+                        value={pageSize}
+                        onChange={(e) => {
+                          const newSize = parseInt(e.target.value)
+                          setPageSize(newSize)
+                          setCurrentPage(1) // Reset to first page
+                          fetchUsers(1, '', newSize)
+                        }}
+                        className="border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                      >
+                        <option value={5}>5</option>
+                        <option value={10}>10</option>
+                        <option value={20}>20</option>
+                        <option value={50}>50</option>
+                        <option value={100}>100</option>
+                      </select>
+                      <span className="text-sm text-gray-600">entries</span>
+                    </div>
+                  </div>
+                  {/* Only show pagination buttons when there are multiple pages */}
+                  {totalPages > 1 && (
                     <div className="flex space-x-2">
                       <Button
                         variant="outline"
@@ -1380,8 +2038,8 @@ export default function UsersPage() {
                         Next
                       </Button>
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             )}
           </CardContent>
@@ -1464,15 +2122,15 @@ export default function UsersPage() {
                   </div>
                 </div>
 
-                {selectedUserDetail.userAssignments && selectedUserDetail.userAssignments.length > 0 && (
+                {selectedUserDetail.userTenants && selectedUserDetail.userTenants.length > 0 && (
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Tenants</label>
                     <div className="space-y-2">
-                      {selectedUserDetail.userAssignments.map((ua: any, index: number) => (
+                      {selectedUserDetail.userTenants.map((ua: any, index: number) => (
                         <div key={index} className="flex items-center space-x-2 p-2 bg-gray-50 rounded">
                           <Badge className={`${
-                            ua.tenant.type === 'CORE' ? 'bg-purple-100 text-purple-800' :
                             ua.tenant.type === 'BUSINESS' ? 'bg-blue-100 text-blue-800' :
+                            ua.tenant.type === 'CORE' ? 'bg-purple-100 text-purple-800' :
                             'bg-green-100 text-green-800'
                           } text-xs`}>
                             {ua.tenant.type}
@@ -1486,6 +2144,9 @@ export default function UsersPage() {
                           </Badge>
                         </div>
                       ))}
+                      {selectedUserDetail.userTenants.length === 0 && (
+                        <p className="text-sm text-gray-500">No tenant assignments</p>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1549,6 +2210,20 @@ export default function UsersPage() {
                     />
                     {addUserErrors.email && (
                       <p className="mt-1 text-sm text-red-600">{addUserErrors.email}</p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Password *</label>
+                    <Input
+                      type="password"
+                      placeholder="Enter password (min 6 characters)"
+                      value={addUserForm.password}
+                      onChange={(e) => handleAddUserFieldChange('password', e.target.value)}
+                      className={addUserErrors.password ? 'border-red-500 focus:border-red-500' : ''}
+                    />
+                    {addUserErrors.password && (
+                      <p className="mt-1 text-sm text-red-600">{addUserErrors.password}</p>
                     )}
                   </div>
 
@@ -1733,6 +2408,7 @@ export default function UsersPage() {
                     setAddUserForm({
                       name: '',
                       email: '',
+                      password: '',
                       phone: '',
                       timezone: 'UTC',
                       language: 'en',
@@ -1747,7 +2423,7 @@ export default function UsersPage() {
                 </Button>
                 <Button
                   onClick={handleAddUserSubmit}
-                  disabled={addUserLoading || !addUserForm.name || !addUserForm.email || !addUserForm.tenantId || !addUserForm.roleId}
+                  disabled={addUserLoading || !addUserForm.name || !addUserForm.email || !addUserForm.password || !addUserForm.tenantId || !addUserForm.roleId}
                 >
                   {addUserLoading ? (
                     <>
@@ -1805,6 +2481,17 @@ export default function UsersPage() {
                       value={editUserForm.email}
                       onChange={(e) => handleEditUserFieldChange('email', e.target.value)}
                     />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                    <Input
+                      type="password"
+                      placeholder="Leave empty to keep current password"
+                      value={editUserForm.password || ''}
+                      onChange={(e) => handleEditUserFieldChange('password', e.target.value)}
+                    />
+                    <p className="mt-1 text-xs text-gray-500">Leave empty to keep current password</p>
                   </div>
 
                   <div>

@@ -19,6 +19,15 @@ import adminRoutes from './routes/admin.routes';
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Test route paling awal - sebelum middleware apapun
+app.get('/test-awal', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Test route paling awal berhasil',
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Middleware
 app.use(helmet()); // Security headers
 app.use(cors({
@@ -39,11 +48,31 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Debug route - langsung di app.ts
+app.get('/debug/test', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Debug route working',
+    timestamp: new Date().toISOString()
+  });
+});
+
 // API routes
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/users', authMiddleware, userRoutes);
 app.use('/api/v1/tenants', authMiddleware, tenantRoutes);
 app.use('/api/v1/admin', authMiddleware, adminRoutes);
+
+
+
+// Test route tepat sebelum 404 handler
+app.get('/test-sebelum-404', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Test route sebelum 404 handler berhasil',
+    timestamp: new Date().toISOString()
+  });
+});
 
 // 404 handler
 app.use((req, res) => {

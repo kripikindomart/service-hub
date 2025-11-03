@@ -134,20 +134,20 @@ export default function UsersPage() {
 
   const columns = [
     {
-      key: 'name',
+      key: 'name' as keyof User,
       label: 'Name',
     },
     {
-      key: 'email',
+      key: 'email' as keyof User,
       label: 'Email',
     },
     {
-      key: 'status',
+      key: 'status' as keyof User,
       label: 'Status',
       render: (value: string) => getStatusBadge(value),
     },
     {
-      key: 'emailVerified',
+      key: 'emailVerified' as keyof User,
       label: 'Email Verified',
       render: (value: boolean) => (
         <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
@@ -158,12 +158,12 @@ export default function UsersPage() {
       ),
     },
     {
-      key: 'createdAt',
+      key: 'createdAt' as keyof User,
       label: 'Created At',
       render: (value: string) => new Date(value).toLocaleDateString(),
     },
     {
-      key: 'actions',
+      key: 'actions' as keyof User,
       label: 'Actions',
       render: (_: any, user: User) => (
         <div className="flex space-x-2">

@@ -157,7 +157,11 @@ export class AdminController {
     const limitNumber = parseInt(limit as string) || 20;
     const skip = (pageNumber - 1) * limitNumber;
 
-    const where: any = {};
+    const where: any = {
+      // Exclude deleted and archived users from active users list
+      deletedAt: null,
+      archivedAt: null,
+    };
 
     // Search across email and name
     if (search) {
@@ -211,8 +215,12 @@ export class AdminController {
           createdAt: true,
           updatedAt: true,
           lastLoginAt: true,
+          deletedAt: true,
+          archivedAt: true,
           userAssignments: {
             select: {
+              tenantId: true,
+              roleId: true,
               tenant: {
                 select: {
                   id: true,
@@ -290,6 +298,8 @@ export class AdminController {
         tokenVersion: true,
         userAssignments: {
           select: {
+            tenantId: true,
+            roleId: true,
             status: true,
             tenant: {
               select: {
@@ -337,6 +347,7 @@ export class AdminController {
     const {
       name,
       email,
+      password,
       phone,
       timezone = 'UTC',
       language = 'en',
@@ -346,8 +357,8 @@ export class AdminController {
       sendEmailInvite = true
     } = req.body;
 
-    if (!name || !email || !tenantId || !roleId) {
-      throw new AppError('Name, email, tenant ID, and role ID are required', 400);
+    if (!name || !email || !password || !tenantId || !roleId) {
+      throw new AppError('Name, email, password, tenant ID, and role ID are required', 400);
     }
 
     // Verify admin has permission to create users in this tenant
@@ -379,8 +390,10 @@ export class AdminController {
       throw new AppError('Invalid role for this tenant', 400);
     }
 
-    // Generate a temporary password
-    const tempPassword = Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-8).toUpperCase();
+    // Hash password
+    const bcrypt = require('bcryptjs');
+    const saltRounds = 10;
+    const passwordHash = await bcrypt.hash(password, saltRounds);
 
     // Create user
     const user = await prisma.user.create({
@@ -391,7 +404,7 @@ export class AdminController {
         timezone,
         language,
         status,
-        passwordHash: tempPassword, // Will be hashed by pre-save middleware
+        passwordHash, // Use hashed password
         emailVerified: false,
         createdBy: adminId,
         homeTenantId: tenantId, // Set home tenant
@@ -419,6 +432,8 @@ export class AdminController {
       include: {
         userAssignments: {
           select: {
+            tenantId: true,
+            roleId: true,
             status: true,
             tenant: {
               select: {
@@ -443,7 +458,6 @@ export class AdminController {
 
     const responseUser = {
       ...createdUser,
-      tempPassword, // Include temp password in response for admin to give to user
       tenantInfo: createdUser?.userAssignments?.[0],
     };
 
@@ -454,7 +468,17 @@ export class AdminController {
   updateUser = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const adminId = req.user!.id;
-    const { name, email, phone, timezone, language, status } = req.body;
+    const {
+      name,
+      email,
+      phone,
+      timezone,
+      language,
+      status,
+      tenantId,
+      roleId,
+      password
+    } = req.body;
 
     if (!id) {
       throw new AppError('User ID is required', 400);
@@ -494,17 +518,28 @@ export class AdminController {
       }
     }
 
+    // Prepare user update data
+    const userData: any = {
+      name,
+      email,
+      phone,
+      timezone,
+      language,
+      status,
+      updatedBy: adminId,
+    };
+
+    // Handle password update if provided
+    if (password && password.trim()) {
+      const bcrypt = require('bcryptjs');
+      const saltRounds = 10;
+      userData.passwordHash = await bcrypt.hash(password.trim(), saltRounds);
+    }
+
+    // Update user basic information
     const user = await prisma.user.update({
       where: { id },
-      data: {
-        name,
-        email,
-        phone,
-        timezone,
-        language,
-        status,
-        updatedBy: adminId,
-      },
+      data: userData,
       select: {
         id: true,
         email: true,
@@ -520,6 +555,50 @@ export class AdminController {
         lastLoginAt: true,
       },
     });
+
+    // Handle tenant and role assignment updates
+    if (tenantId && roleId) {
+      // Get current user assignments
+      const currentAssignments = await prisma.userAssignment.findMany({
+        where: { userId: id },
+        include: { tenant: true, role: true }
+      });
+
+      // Check if user has an assignment for the specified tenant
+      const existingAssignment = currentAssignments.find(ua => ua.tenantId === tenantId);
+
+      if (existingAssignment) {
+        // Update existing assignment
+        await prisma.userAssignment.update({
+          where: { id: existingAssignment.id },
+          data: {
+            roleId: roleId
+          }
+        });
+      } else {
+        // Create new assignment
+        await prisma.userAssignment.create({
+          data: {
+            userId: id,
+            tenantId: tenantId,
+            roleId: roleId,
+            status: 'ACTIVE',
+            isPrimary: currentAssignments.length === 0, // Make primary if no other assignments
+            assignedBy: adminId,
+            assignedAt: new Date()
+          }
+        });
+      }
+
+      // Update user's current tenant if needed
+      await prisma.user.update({
+        where: { id },
+        data: {
+          currentTenantId: tenantId,
+          homeTenantId: existingUser.homeTenantId || tenantId // Set home tenant if not set
+        }
+      });
+    }
 
     res.json(ResponseUtil.success('User updated successfully', user));
   });
@@ -852,10 +931,11 @@ export class AdminController {
 
     // Search functionality
     if (search) {
+      const searchLower = (search as string).toLowerCase();
       where.OR = [
-        { name: { contains: search as string, mode: 'insensitive' } },
-        { email: { contains: search as string, mode: 'insensitive' } },
-        { deletionReason: { contains: search as string, mode: 'insensitive' } }
+        { name: { contains: searchLower } },
+        { email: { contains: searchLower } },
+        { deletionReason: { contains: searchLower } }
       ];
     }
 
@@ -962,9 +1042,10 @@ export class AdminController {
 
     // Search functionality
     if (search) {
+      const searchLower = (search as string).toLowerCase();
       where.OR = [
-        { name: { contains: search as string, mode: 'insensitive' } },
-        { email: { contains: search as string, mode: 'insensitive' } }
+        { name: { contains: searchLower } },
+        { email: { contains: searchLower } }
       ];
     }
 
@@ -1200,19 +1281,74 @@ export class AdminController {
             });
             break;
 
+          case 'archive':
+            // Prevent self-archiving
+            if (userId === adminId) {
+              throw new AppError('Cannot archive your own account', 400);
+            }
+
+            result = await prisma.user.update({
+              where: { id: userId },
+              data: {
+                archivedAt: new Date(),
+                updatedBy: adminId
+              },
+              select: { id: true, email: true, name: true, archivedAt: true }
+            });
+            break;
+
+          case 'unarchive':
+            result = await prisma.user.update({
+              where: { id: userId },
+              data: {
+                archivedAt: null,
+                updatedBy: adminId
+              },
+              select: { id: true, email: true, name: true, archivedAt: true }
+            });
+            break;
+
           case 'delete':
             // Prevent self-deletion
             if (userId === adminId) {
               throw new AppError('Cannot delete your own account', 400);
             }
 
-            // Delete related records
+            // Soft delete - move to trash
+            result = await prisma.user.update({
+              where: { id: userId },
+              data: {
+                deletedAt: new Date(),
+                updatedBy: adminId
+              },
+              select: { id: true, email: true, name: true, deletedAt: true }
+            });
+            break;
+
+          case 'restore':
+            result = await prisma.user.update({
+              where: { id: userId },
+              data: {
+                deletedAt: null,
+                updatedBy: adminId
+              },
+              select: { id: true, email: true, name: true, deletedAt: true }
+            });
+            break;
+
+          case 'permanent-delete':
+            // Prevent self-deletion
+            if (userId === adminId) {
+              throw new AppError('Cannot permanently delete your own account', 400);
+            }
+
+            // Hard delete - actually delete records
             await prisma.$transaction([
               prisma.session.deleteMany({ where: { userId } }),
               prisma.userAssignment.deleteMany({ where: { userId } }),
               prisma.user.delete({ where: { id: userId } })
             ]);
-            result = { id: userId, deleted: true };
+            result = { id: userId, permanentlyDeleted: true };
             break;
 
           default:

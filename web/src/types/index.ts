@@ -10,7 +10,10 @@ export interface User {
   createdAt: string
   updatedAt: string
   lastLoginAt?: string
+  deletedAt?: string
+  archivedAt?: string
   userTenants?: UserTenant[]
+  actions?: any
 }
 
 export interface UserTenant {
@@ -20,6 +23,7 @@ export interface UserTenant {
   roleId: string
   status: 'ACTIVE' | 'INACTIVE'
   joinedAt: string
+  isPrimary?: boolean
   tenant?: Tenant
   role?: Role
 }
@@ -28,11 +32,31 @@ export interface Tenant {
   id: string
   name: string
   slug: string
-  type: 'CORE' | 'BUSINESS' | 'PERSONAL'
-  tier: 'STARTER' | 'PRO' | 'ENTERPRISE'
-  status: 'ACTIVE' | 'INACTIVE'
+  domain?: string
+  type: 'CORE' | 'BUSINESS' | 'TRIAL'
+  tier: 'STARTER' | 'PROFESSIONAL' | 'ENTERPRISE' | 'CUSTOM'
+  status: 'ACTIVE' | 'INACTIVE' | 'PENDING'
+  maxUsers: number
+  maxServices: number
+  storageLimitMb: number
+  databaseName: string
+  databaseHost?: string
+  databasePort?: number
+  primaryColor: string
+  logoUrl?: string
+  faviconUrl?: string
+  customDomain?: string
+  settings?: any
+  featureFlags?: any
+  integrations?: any
   createdAt: string
   updatedAt: string
+  userCount?: number
+  serviceCount?: number
+  storageUsed?: number
+  lastActivity?: string
+  archivedAt?: string
+  deletedAt?: string
 }
 
 export interface Role {
@@ -40,6 +64,7 @@ export interface Role {
   name: string
   description?: string
   isSystemRole: boolean
+  level?: string
   permissions?: RolePermission[]
 }
 
@@ -51,6 +76,7 @@ export interface Permission {
   scope: 'OWN' | 'TENANT' | 'ALL'
   description?: string
   category?: string
+  isSystemPermission?: boolean
 }
 
 export interface RolePermission {

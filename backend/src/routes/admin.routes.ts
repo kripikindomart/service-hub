@@ -14,8 +14,20 @@ router.post('/users/:userId/deactivate', asyncHandler(adminController.deactivate
 // Get all users (admin only)
 router.get('/users', asyncHandler(adminController.getAllUsers));
 
+// Get deleted users (trash)
+router.get('/users/deleted', asyncHandler(adminController.getDeletedUsers));
+
+// Get archived users
+router.get('/users/archived', asyncHandler(adminController.getArchivedUsers));
+
+// Export users data
+router.get('/users/export', asyncHandler(adminController.exportUsers));
+
 // Create new user (admin only)
 router.post('/users', asyncHandler(adminController.createUser));
+
+// Bulk actions on users
+router.post('/users/bulk-action', asyncHandler(adminController.bulkActionUsers));
 
 // Get user by ID (admin only)
 router.get('/users/:id', asyncHandler(adminController.getUserById));
@@ -37,18 +49,6 @@ router.post('/users/:id/unarchive', asyncHandler(adminController.unarchiveUser))
 
 // Permanent delete user (SUPER_ADMIN only)
 router.delete('/users/:id/permanent', asyncHandler(adminController.permanentDeleteUser));
-
-// Get deleted users (trash)
-router.get('/users/deleted', asyncHandler(adminController.getDeletedUsers));
-
-// Get archived users
-router.get('/users/archived', asyncHandler(adminController.getArchivedUsers));
-
-// Bulk actions on users
-router.post('/users/bulk-action', asyncHandler(adminController.bulkActionUsers));
-
-// Export users data
-router.get('/users/export', asyncHandler(adminController.exportUsers));
 
 // Create system permissions
 router.post('/permissions', asyncHandler(adminController.createPermission));

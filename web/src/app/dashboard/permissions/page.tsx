@@ -120,33 +120,33 @@ export default function PermissionsPage() {
 
   const columns = [
     {
-      key: 'name',
+      key: 'name' as keyof Permission,
       label: 'Name',
     },
     {
-      key: 'resource',
+      key: 'resource' as keyof Permission,
       label: 'Resource',
     },
     {
-      key: 'action',
+      key: 'action' as keyof Permission,
       label: 'Action',
     },
     {
-      key: 'scope',
+      key: 'scope' as keyof Permission,
       label: 'Scope',
       render: (value: string) => getScopeBadge(value),
     },
     {
-      key: 'category',
+      key: 'category' as keyof Permission,
       label: 'Category',
     },
     {
-      key: 'description',
+      key: 'description' as keyof Permission,
       label: 'Description',
       render: (value: string) => value || '-',
     },
     {
-      key: 'isSystemPermission',
+      key: 'isSystemPermission' as keyof Permission,
       label: 'System Permission',
       render: (value: boolean) => (
         <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${

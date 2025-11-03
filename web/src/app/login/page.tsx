@@ -10,7 +10,7 @@ import { LoginRequest } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Eye, EyeOff, Lock, Mail, Shield, User } from 'lucide-react'
+import { Eye, EyeOff, Lock, Mail, Shield, User, Zap, Copy } from 'lucide-react'
 
 export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false)
@@ -20,7 +20,56 @@ export default function LoginPage() {
     register,
     handleSubmit,
     formState: { errors },
+    setValue,
+    watch,
   } = useForm<LoginRequest>()
+
+  // Demo credentials
+  const demoCredentials = {
+    email: 'superadmin@system.com',
+    password: 'SuperAdmin123!'
+  }
+
+  // Function to fill demo credentials
+  const fillDemoCredentials = () => {
+    setValue('email', demoCredentials.email)
+    setValue('password', demoCredentials.password)
+    setShowPassword(true)
+    toast.success('Demo credentials filled!')
+  }
+
+  // Function for quick demo login
+  const quickDemoLogin = async () => {
+    setIsLoading(true)
+    setValue('email', demoCredentials.email)
+    setValue('password', demoCredentials.password)
+
+    try {
+      const response = await authApi.login(demoCredentials)
+      if (response.success && response.data) {
+        setAuthData(
+          response.data.tokens.accessToken,
+          response.data.tokens.refreshToken,
+          response.data.user
+        )
+        toast.success('Welcome! Demo login successful!')
+        router.push('/dashboard')
+      } else {
+        toast.error(response.message || 'Demo login failed')
+      }
+    } catch (error: any) {
+      console.error('Demo login error:', error)
+      toast.error(error.response?.data?.message || 'Demo login failed')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // Function to copy credentials to clipboard
+  const copyToClipboard = (text: string, label: string) => {
+    navigator.clipboard.writeText(text)
+    toast.success(`${label} copied to clipboard!`)
+  }
 
   const onSubmit = async (data: LoginRequest) => {
     setIsLoading(true)
@@ -184,19 +233,78 @@ export default function LoginPage() {
               <div className="absolute top-0 right-0 w-16 h-16 bg-white/10 rounded-full -mr-8 -mt-8"></div>
               <div className="absolute bottom-0 left-0 w-12 h-12 bg-white/10 rounded-full -ml-6 -mb-6"></div>
               <div className="relative z-10">
-                <p className="text-sm font-bold text-white mb-3 flex items-center gap-2">
-                  <Shield className="w-4 h-4" />
-                  Demo Access Credentials
-                </p>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-sm font-bold text-white flex items-center gap-2">
+                    <Shield className="w-4 h-4" />
+                    Demo Access Credentials
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={fillDemoCredentials}
+                      className="h-7 px-3 text-xs bg-white/20 hover:bg-white/30 text-white border-white/30"
+                    >
+                      <Zap className="w-3 h-3 mr-1" />
+                      Auto-Fill
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={quickDemoLogin}
+                      disabled={isLoading}
+                      className="h-7 px-3 text-xs bg-white text-purple-600 hover:bg-white/90 font-bold"
+                    >
+                      {isLoading ? (
+                        <div className="flex items-center gap-1">
+                          <div className="w-3 h-3 border-2 border-purple-600 border-t-transparent rounded-full animate-spin"></div>
+                          Login...
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1">
+                          <Shield className="w-3 h-3" />
+                          Quick Login
+                        </div>
+                      )}
+                    </Button>
+                  </div>
+                </div>
                 <div className="space-y-2 text-sm text-white/90">
-                  <div className="flex items-center gap-2">
-                    <Mail className="w-3 h-3" />
-                    <span><strong>Email:</strong> superadmin@system.com</span>
+                  <div className="flex items-center justify-between group">
+                    <div className="flex items-center gap-2">
+                      <Mail className="w-3 h-3" />
+                      <span className="truncate"><strong>Email:</strong> superadmin@system.com</span>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => copyToClipboard(demoCredentials.email, 'Email')}
+                      className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-white hover:bg-white/20"
+                    >
+                      <Copy className="w-3 h-3" />
+                    </Button>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Lock className="w-3 h-3" />
-                    <span><strong>Password:</strong> SuperAdmin123!</span>
+                  <div className="flex items-center justify-between group">
+                    <div className="flex items-center gap-2">
+                      <Lock className="w-3 h-3" />
+                      <span className="truncate"><strong>Password:</strong> SuperAdmin123!</span>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => copyToClipboard(demoCredentials.password, 'Password')}
+                      className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-white hover:bg-white/20"
+                    >
+                      <Copy className="w-3 h-3" />
+                    </Button>
                   </div>
+                </div>
+                <div className="mt-3 pt-3 border-t border-white/20">
+                  <p className="text-xs text-white/80 text-center">
+                    💡 <strong>Quick Login:</strong> Instant demo access | <strong>Auto-Fill:</strong> Fill form manually
+                  </p>
+                  <p className="text-xs text-white/60 text-center mt-1">
+                    🖱️ Hover over credentials to copy them individually
+                  </p>
                 </div>
               </div>
             </div>
