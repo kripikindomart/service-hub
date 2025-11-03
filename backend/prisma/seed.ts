@@ -1,4 +1,4 @@
-import { PrismaClient, EntityStatus, TenantType, SubscriptionTier } from '@prisma/client';
+import { PrismaClient, EntityStatus, TenantType, SubscriptionTier, PermissionScope, AssignmentStatus } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
@@ -493,7 +493,7 @@ async function main() {
     });
 
     if (role) {
-      await prisma.userTenant.upsert({
+      await prisma.userAssignment.upsert({
         where: {
           userId_tenantId: {
             userId: user.id,
@@ -505,7 +505,9 @@ async function main() {
           userId: user.id,
           tenantId: tenant.id,
           roleId: role.id,
-          status: userData.status,
+          status: userData.status === EntityStatus.ACTIVE ? AssignmentStatus.ACTIVE :
+                userData.status === EntityStatus.INACTIVE ? AssignmentStatus.SUSPENDED :
+                AssignmentStatus.PENDING,
           isPrimary: true,
           assignedBy: createdUsers[0].user.id, // Super Admin assigns all
         },
@@ -518,38 +520,38 @@ async function main() {
   // 6. Create Permissions
   const permissions = [
     // Super Permissions
-    { name: 'permission:all', resource: 'all', action: 'all', scope: 'ALL', description: 'Full access to all resources and actions across all tenants', category: 'Super Admin' },
+    { name: 'permission:all', resource: 'all', action: 'all', scope: PermissionScope.ALL, description: 'Full access to all resources and actions across all tenants', category: 'Super Admin' },
 
     // User Management Permissions
-    { name: 'users:read', resource: 'users', action: 'read', scope: 'ALL', description: 'Read user data across all tenants', category: 'User Management' },
-    { name: 'users:write', resource: 'users', action: 'write', scope: 'ALL', description: 'Write user data across all tenants', category: 'User Management' },
-    { name: 'users:delete', resource: 'users', action: 'delete', scope: 'ALL', description: 'Delete users across all tenants', category: 'User Management' },
-    { name: 'users:activate', resource: 'users', action: 'activate', scope: 'ALL', description: 'Activate users across all tenants', category: 'User Management' },
-    { name: 'users:deactivate', resource: 'users', action: 'deactivate', scope: 'ALL', description: 'Deactivate users across all tenants', category: 'User Management' },
+    { name: 'users:read', resource: 'users', action: 'read', scope: PermissionScope.ALL, description: 'Read user data across all tenants', category: 'User Management' },
+    { name: 'users:write', resource: 'users', action: 'write', scope: PermissionScope.ALL, description: 'Write user data across all tenants', category: 'User Management' },
+    { name: 'users:delete', resource: 'users', action: 'delete', scope: PermissionScope.ALL, description: 'Delete users across all tenants', category: 'User Management' },
+    { name: 'users:activate', resource: 'users', action: 'activate', scope: PermissionScope.ALL, description: 'Activate users across all tenants', category: 'User Management' },
+    { name: 'users:deactivate', resource: 'users', action: 'deactivate', scope: PermissionScope.ALL, description: 'Deactivate users across all tenants', category: 'User Management' },
 
     // Tenant Management Permissions
-    { name: 'tenants:read', resource: 'tenants', action: 'read', scope: 'ALL', description: 'Read tenant data across all tenants', category: 'Tenant Management' },
-    { name: 'tenants:write', resource: 'tenants', action: 'write', scope: 'ALL', description: 'Write tenant data across all tenants', category: 'Tenant Management' },
-    { name: 'tenants:delete', resource: 'tenants', action: 'delete', scope: 'ALL', description: 'Delete tenants across all tenants', category: 'Tenant Management' },
-    { name: 'tenants:activate', resource: 'tenants', action: 'activate', scope: 'ALL', description: 'Activate tenants', category: 'Tenant Management' },
-    { name: 'tenants:deactivate', resource: 'tenants', action: 'deactivate', scope: 'ALL', description: 'Deactivate tenants', category: 'Tenant Management' },
-    { name: 'tenants:archive', resource: 'tenants', action: 'archive', scope: 'ALL', description: 'Archive tenants', category: 'Tenant Management' },
+    { name: 'tenants:read', resource: 'tenants', action: 'read', scope: PermissionScope.ALL, description: 'Read tenant data across all tenants', category: 'Tenant Management' },
+    { name: 'tenants:write', resource: 'tenants', action: 'write', scope: PermissionScope.ALL, description: 'Write tenant data across all tenants', category: 'Tenant Management' },
+    { name: 'tenants:delete', resource: 'tenants', action: 'delete', scope: PermissionScope.ALL, description: 'Delete tenants across all tenants', category: 'Tenant Management' },
+    { name: 'tenants:activate', resource: 'tenants', action: 'activate', scope: PermissionScope.ALL, description: 'Activate tenants', category: 'Tenant Management' },
+    { name: 'tenants:deactivate', resource: 'tenants', action: 'deactivate', scope: PermissionScope.ALL, description: 'Deactivate tenants', category: 'Tenant Management' },
+    { name: 'tenants:archive', resource: 'tenants', action: 'archive', scope: PermissionScope.ALL, description: 'Archive tenants', category: 'Tenant Management' },
 
     // Role Management Permissions
-    { name: 'roles:read', resource: 'roles', action: 'read', scope: 'ALL', description: 'Read role data across all tenants', category: 'Role Management' },
-    { name: 'roles:write', resource: 'roles', action: 'write', scope: 'ALL', description: 'Write role data across all tenants', category: 'Role Management' },
-    { name: 'roles:delete', resource: 'roles', action: 'delete', scope: 'ALL', description: 'Delete roles across all tenants', category: 'Role Management' },
+    { name: 'roles:read', resource: 'roles', action: 'read', scope: PermissionScope.ALL, description: 'Read role data across all tenants', category: 'Role Management' },
+    { name: 'roles:write', resource: 'roles', action: 'write', scope: PermissionScope.ALL, description: 'Write role data across all tenants', category: 'Role Management' },
+    { name: 'roles:delete', resource: 'roles', action: 'delete', scope: PermissionScope.ALL, description: 'Delete roles across all tenants', category: 'Role Management' },
 
     // System Management Permissions
-    { name: 'system:read', resource: 'system', action: 'read', scope: 'ALL', description: 'Read system configuration', category: 'System Management' },
-    { name: 'system:write', resource: 'system', action: 'write', scope: 'ALL', description: 'Write system configuration', category: 'System Management' },
-    { name: 'audit:read', resource: 'audit', action: 'read', scope: 'ALL', description: 'Read audit logs', category: 'System Management' },
+    { name: 'system:read', resource: 'system', action: 'read', scope: PermissionScope.ALL, description: 'Read system configuration', category: 'System Management' },
+    { name: 'system:write', resource: 'system', action: 'write', scope: PermissionScope.ALL, description: 'Write system configuration', category: 'System Management' },
+    { name: 'audit:read', resource: 'audit', action: 'read', scope: PermissionScope.ALL, description: 'Read audit logs', category: 'System Management' },
 
     // Tenant-specific permissions
-    { name: 'tenant:users:read', resource: 'users', action: 'read', scope: 'TENANT', description: 'Read users within tenant', category: 'Tenant User Management' },
-    { name: 'tenant:users:write', resource: 'users', action: 'write', scope: 'TENANT', description: 'Write users within tenant', category: 'Tenant User Management' },
-    { name: 'tenant:roles:read', resource: 'roles', action: 'read', scope: 'TENANT', description: 'Read roles within tenant', category: 'Tenant Role Management' },
-    { name: 'tenant:services:read', resource: 'services', action: 'read', scope: 'TENANT', description: 'Read services within tenant', category: 'Tenant Services' },
+    { name: 'tenant:users:read', resource: 'users', action: 'read', scope: PermissionScope.TENANT, description: 'Read users within tenant', category: 'Tenant User Management' },
+    { name: 'tenant:users:write', resource: 'users', action: 'write', scope: PermissionScope.TENANT, description: 'Write users within tenant', category: 'Tenant User Management' },
+    { name: 'tenant:roles:read', resource: 'roles', action: 'read', scope: PermissionScope.TENANT, description: 'Read roles within tenant', category: 'Tenant Role Management' },
+    { name: 'tenant:services:read', resource: 'services', action: 'read', scope: PermissionScope.TENANT, description: 'Read services within tenant', category: 'Tenant Services' },
   ];
 
   for (const permission of permissions) {
@@ -558,7 +560,7 @@ async function main() {
       update: {},
       create: {
         ...permission,
-        isSystemPermission: permission.scope === 'ALL',
+        isSystemPermission: permission.scope === PermissionScope.ALL,
       },
     });
   }
