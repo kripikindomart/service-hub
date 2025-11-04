@@ -100,7 +100,7 @@ export class TenantArchiveController {
     }
 
     if (existingTenant.status !== 'ARCHIVED') {
-      throw new AppError('Tenant must be archived before unarchiving', 400);
+      throw new AppError(`Cannot unarchive tenant with status '${existingTenant.status}'. Only archived tenants can be unarchived.`, 400);
     }
 
     // Unarchive tenant
@@ -347,7 +347,7 @@ export class TenantArchiveController {
     }
 
     if (existingTenant.status !== 'DELETED') {
-      throw new AppError('Tenant must be deleted before permanent deletion', 400);
+      throw new AppError(`Cannot permanently delete tenant with status '${existingTenant.status}'. Only deleted tenants can be permanently deleted.`, 400);
     }
 
     // Prevent permanent deletion of CORE tenant

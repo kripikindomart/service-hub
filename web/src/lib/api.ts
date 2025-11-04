@@ -1,7 +1,7 @@
 import axios from 'axios'
 import { ApiResponse, PaginatedResponse, AuthResponse, LoginRequest, RegisterRequest, User, Permission, Tenant } from '@/types'
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3002'
 
 // Token management utilities
 const getTokenExpiration = (token: string): number | null => {

@@ -19,6 +19,7 @@ import { toast } from 'sonner'
 import { validateTenantForm, parseJsonField } from './validation'
 import { TenantModals } from './modals'
 import { Tenant } from '@/types'
+import { showErrorToast } from '@/lib/error-utils'
 import {
   BuildingOfficeIcon,
   MagnifyingGlassIcon,
@@ -263,7 +264,6 @@ export default function TenantsPage() {
       setActionLoading(true)
       console.log(`Bulk ${action} for tenants:`, selectedTenants)
 
-      const { tenantApi } = await import('@/lib/api')
       const promises = selectedTenants.map(tenantId => {
         switch (action) {
           case 'activate':
@@ -277,7 +277,7 @@ export default function TenantsPage() {
           case 'delete':
             return tenantApi.deleteTenant(tenantId)
           case 'permanent delete':
-            return tenantApi.deleteTenant(tenantId)
+            return tenantApi.permanentDeleteTenant(tenantId)
           case 'restore':
             return tenantApi.unarchiveTenant(tenantId)
           default:
@@ -1246,7 +1246,7 @@ export default function TenantsPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      {activeTab === 'active' && (
+                      {(activeTab === 'active' || activeTab === 'archive' || activeTab === 'trash') && (
                         <TableHead className="w-12">
                           <Checkbox
                             checked={selectedTenants.length === paginatedTenants.filter(canSelectTenant).length && paginatedTenants.filter(canSelectTenant).length > 0}
@@ -1254,7 +1254,7 @@ export default function TenantsPage() {
                           />
                         </TableHead>
                       )}
-                      {activeTab === 'active' && <TableHead className="w-12 text-center">No</TableHead>}
+                      {(activeTab === 'active' || activeTab === 'archive' || activeTab === 'trash') && <TableHead className="w-12 text-center">No</TableHead>}
                       <TableHead>Tenant</TableHead>
                       <TableHead>Type</TableHead>
                       <TableHead>Tier</TableHead>
@@ -1270,7 +1270,7 @@ export default function TenantsPage() {
                       const currentRowIndex = startIndex + index + 1
                       return (
                       <TableRow key={tenant.id}>
-                        {activeTab === 'active' && (
+                        {(activeTab === 'active' || activeTab === 'archive' || activeTab === 'trash') && (
                           <TableCell>
                             {canSelectTenant(tenant) ? (
                               <Checkbox
@@ -1282,7 +1282,7 @@ export default function TenantsPage() {
                             )}
                           </TableCell>
                         )}
-                        {activeTab === 'active' && (
+                        {(activeTab === 'active' || activeTab === 'archive' || activeTab === 'trash') && (
                           <TableCell className="text-center">
                             <div className="text-sm text-gray-500">
                               {currentRowIndex}

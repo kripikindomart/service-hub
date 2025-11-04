@@ -33,7 +33,7 @@ export class TenantController {
       // Super admins can see all tenants in the system
       let where: any = {
         status: {
-          not: 'DELETED'  // Exclude DELETED tenants by default
+          notIn: ['DELETED', 'ARCHIVED']  // Exclude DELETED and ARCHIVED tenants by default
         }
       };
 
@@ -771,7 +771,7 @@ export class TenantController {
   deleteTenant = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const adminId = req.user!.id;
-    const { reason } = req.body; // Optional deletion reason
+    const { reason } = req.body || {}; // Optional deletion reason
 
     if (!id) {
       throw new AppError('Tenant ID is required', 400);
