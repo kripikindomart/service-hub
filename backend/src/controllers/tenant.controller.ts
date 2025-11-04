@@ -3,7 +3,7 @@ import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import { prisma } from '../database/database.service';
 import { asyncHandler, AppError } from '../middleware/error.middleware';
 import { ResponseUtil } from '../utils/response.util';
-import { hasAdminAccess, hasPermission } from '../utils/permissions.util';
+import { hasAdminAccess, hasPermission, isSuperAdmin } from '../utils/permissions.util';
 
 export class TenantController {
   // Test endpoint for debugging
@@ -14,7 +14,7 @@ export class TenantController {
     }));
   });
 
-  // Get user's accessible tenants
+  // Get user's accessible tenants (all tenants for super admins, assigned tenants for regular users)
   getTenants = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.user!.id;
     const { page = 1, limit = 10, search, type, status } = req.query;
@@ -23,88 +23,204 @@ export class TenantController {
     const limitNumber = parseInt(limit as string);
     const skip = (pageNumber - 1) * limitNumber;
 
-    // Build where clause
-    let where: any = {
-      userId,
-      deletedAt: null,
-      tenant: {
+    // Check if user is super admin
+    const superAdminUser = await isSuperAdmin(userId);
+
+    let tenants: any[] = [];
+    let totalCount = 0;
+
+    if (superAdminUser) {
+      // Super admins can see all tenants in the system
+      let where: any = {
         status: {
           not: 'DELETED'  // Exclude DELETED tenants by default
         }
-      }
-    };
+      };
 
-    if (search) {
-      where.tenant = {
-        ...where.tenant,
-        OR: [
+      if (search) {
+        where.OR = [
           { name: { contains: search as string } },
           { slug: { contains: search as string } },
-        ],
+        ];
+      }
+
+      if (type) {
+        where.type = type as string;
+      }
+
+      if (status) {
+        where.status = status as string;
+      }
+
+      const [tenantList, totalTenants] = await Promise.all([
+        prisma.tenant.findMany({
+          where,
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            type: true,
+            status: true,
+            tier: true,
+            primaryColor: true,
+            logoUrl: true,
+            createdAt: true,
+            updatedAt: true,
+            maxUsers: true,
+            maxServices: true,
+            storageLimitMb: true,
+            customDomain: true,
+            domain: true,
+          },
+          orderBy: { createdAt: 'desc' },
+          skip,
+          take: limitNumber,
+        }),
+        prisma.tenant.count({ where }),
+      ]);
+
+      // Get user count and storage used for each tenant
+      const tenantsWithStats = await Promise.all(
+        tenantList.map(async (tenant) => {
+          const [userCount, storageUsed] = await Promise.all([
+            prisma.userAssignment.count({
+              where: {
+                tenantId: tenant.id,
+                status: 'ACTIVE',
+              },
+            }),
+            // TODO: Calculate actual storage used when storage tracking is implemented
+            0,
+          ]);
+
+          return {
+            id: tenant.id,
+            name: tenant.name,
+            slug: tenant.slug,
+            type: tenant.type,
+            tier: tenant.tier,
+            status: tenant.status,
+            role: 'Super Administrator',
+            level: 'SUPER_ADMIN',
+            isPrimary: tenant.type === 'CORE',
+            branding: {
+              primaryColor: tenant.primaryColor,
+              logoUrl: tenant.logoUrl,
+            },
+            joinedAt: tenant.createdAt,
+            userCount,
+            maxUsers: tenant.maxUsers,
+            serviceCount: 0, // TODO: Calculate actual service count
+            maxServices: tenant.maxServices,
+            storageUsed,
+            storageLimitMb: tenant.storageLimitMb,
+            customDomain: tenant.customDomain,
+            domain: tenant.domain,
+          };
+        })
+      );
+
+      tenants = tenantsWithStats;
+      totalCount = totalTenants;
+    } else {
+      // Regular users only see tenants they're assigned to
+      let where: any = {
+        userId,
+        deletedAt: null,
+        tenant: {
+          status: {
+            not: 'DELETED'  // Exclude DELETED tenants by default
+          }
+        }
       };
-    }
 
-    if (type) {
-      where.tenant = {
-        ...where.tenant,
-        type: type as string,
-      };
-    }
+      if (search) {
+        where.tenant = {
+          ...where.tenant,
+          OR: [
+            { name: { contains: search as string } },
+            { slug: { contains: search as string } },
+          ],
+        };
+      }
 
-    if (status) {
-      where.tenant.status = status as string;
-    }
+      if (type) {
+        where.tenant = {
+          ...where.tenant,
+          type: type as string,
+        };
+      }
 
-    const [userAssignments, totalCount] = await Promise.all([
-      prisma.userAssignment.findMany({
-        where,
-        include: {
-          tenant: {
-            select: {
-              id: true,
-              name: true,
-              slug: true,
-              type: true,
-              status: true,
-              tier: true,
-              primaryColor: true,
-              logoUrl: true,
-              createdAt: true,
-              updatedAt: true,
+      if (status) {
+        where.tenant.status = status as string;
+      }
+
+      const [userAssignments, totalAssignments] = await Promise.all([
+        prisma.userAssignment.findMany({
+          where,
+          include: {
+            tenant: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                type: true,
+                status: true,
+                tier: true,
+                primaryColor: true,
+                logoUrl: true,
+                createdAt: true,
+                updatedAt: true,
+                maxUsers: true,
+                maxServices: true,
+                storageLimitMb: true,
+                customDomain: true,
+                domain: true,
+              },
+            },
+            role: {
+              select: {
+                id: true,
+                name: true,
+                displayName: true,
+                level: true,
+              },
             },
           },
-          role: {
-            select: {
-              id: true,
-              name: true,
-              displayName: true,
-              level: true,
-            },
-          },
+          orderBy: { isPrimary: 'desc' },
+          skip,
+          take: limitNumber,
+        }),
+        prisma.userAssignment.count({ where }),
+      ]);
+
+      tenants = userAssignments.map(ua => ({
+        id: ua.tenant.id,
+        name: ua.tenant.name,
+        slug: ua.tenant.slug,
+        type: ua.tenant.type,
+        tier: ua.tenant.tier,
+        status: ua.tenant.status,
+        role: ua.role.displayName,
+        level: ua.role.level,
+        isPrimary: ua.isPrimary,
+        branding: {
+          primaryColor: ua.tenant.primaryColor,
+          logoUrl: ua.tenant.logoUrl,
         },
-        orderBy: { isPrimary: 'desc' },
-        skip,
-        take: limitNumber,
-      }),
-      prisma.userAssignment.count({ where }),
-    ]);
+        joinedAt: ua.createdAt,
+        userCount: 0, // TODO: Calculate actual user count for regular users
+        maxUsers: ua.tenant.maxUsers,
+        serviceCount: 0, // TODO: Calculate actual service count
+        maxServices: ua.tenant.maxServices,
+        storageUsed: 0, // TODO: Calculate actual storage used
+        storageLimitMb: ua.tenant.storageLimitMb,
+        customDomain: ua.tenant.customDomain,
+        domain: ua.tenant.domain,
+      }));
 
-    const tenants = userAssignments.map(ua => ({
-      id: ua.tenant.id,
-      name: ua.tenant.name,
-      slug: ua.tenant.slug,
-      type: ua.tenant.type,
-      tier: ua.tenant.tier,
-      status: ua.tenant.status,
-      role: ua.role.displayName,
-      level: ua.role.level,
-      isPrimary: ua.isPrimary,
-      branding: {
-        primaryColor: ua.tenant.primaryColor,
-        logoUrl: ua.tenant.logoUrl,
-      },
-      joinedAt: ua.createdAt,
-    }));
+      totalCount = totalAssignments;
+    }
 
     res.json(ResponseUtil.paginated('Tenants retrieved successfully', tenants, pageNumber, limitNumber, totalCount));
   });

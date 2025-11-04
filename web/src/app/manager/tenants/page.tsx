@@ -153,7 +153,8 @@ export default function TenantsPage() {
       }
 
       if (response.success && response.data) {
-        setTenants(response.data.items || [])
+        // Handle both paginated response format (data.items) and direct array format (data)
+        setTenants(response.data.items || response.data || [])
         // Reset pagination when fetching new data
         setCurrentPage(1)
       }
@@ -397,46 +398,48 @@ export default function TenantsPage() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6">
+      <div className="space-y-4 sm:space-y-6">
         {/* Header */}
-        <div className="p-6 border shadow-lg bg-white/80 backdrop-blur-sm rounded-2xl border-white/20">
-          <div className="flex items-center justify-between">
+        <div className="p-4 sm:p-6 border shadow-lg bg-white/80 backdrop-blur-sm rounded-2xl border-white/20">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <h1 className="mb-2 text-3xl font-black text-gradient">Tenant Management</h1>
-              <p className="text-lg text-gray-600">Manage organizational units and their settings</p>
+              <h1 className="mb-2 text-2xl sm:text-3xl font-black text-gradient">Tenant Management</h1>
+              <p className="text-base sm:text-lg text-gray-600">Manage organizational units and their settings</p>
             </div>
-            <div className="flex items-center space-x-3">
+            <div className="flex flex-wrap items-center gap-2">
               <Button
                 variant="outline"
                 onClick={() => setViewMode(viewMode === 'grid' ? 'table' : 'grid')}
-                className="h-12"
+                className="h-10 sm:h-12"
               >
                 {viewMode === 'grid' ? (
                   <TableCellsIcon className="w-4 h-4 mr-2" />
                 ) : (
                   <Squares2X2Icon className="w-4 h-4 mr-2" />
                 )}
-                {viewMode === 'grid' ? 'Table View' : 'Grid View'}
+                <span className="hidden sm:inline">{viewMode === 'grid' ? 'Table View' : 'Grid View'}</span>
+                <span className="sm:hidden">{viewMode === 'grid' ? 'Table' : 'Grid'}</span>
               </Button>
               <Button
                 variant="outline"
                 onClick={fetchTenants}
                 disabled={loading}
-                className="h-12"
+                className="h-10 sm:h-12"
               >
                 <ArrowPathIcon className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
-                Refresh
+                <span className="hidden sm:inline">Refresh</span>
               </Button>
               {activeTab === 'active' && (
                 <Button
-                  className="h-12 btn-gradient"
+                  className="h-10 sm:h-12 btn-gradient"
                   onClick={() => {
                     resetForm()
                     setShowAddModal(true)
                   }}
                 >
                   <PlusIcon className="w-4 h-4 mr-2" />
-                  Add Tenant
+                  <span className="hidden sm:inline">Add Tenant</span>
+                  <span className="sm:hidden">Add</span>
                 </Button>
               )}
             </div>
@@ -445,7 +448,7 @@ export default function TenantsPage() {
 
         {/* Tabs */}
         <div className="p-2 border shadow-lg bg-white/80 backdrop-blur-sm rounded-2xl border-white/20">
-          <div className="flex space-x-1">
+          <div className="flex flex-col sm:flex-row sm:space-x-1 space-y-1 sm:space-y-0">
             <Button
               variant={activeTab === 'active' ? 'default' : 'ghost'}
               onClick={() => setActiveTab('active')}
@@ -474,7 +477,7 @@ export default function TenantsPage() {
         </div>
 
         {/* Statistics Dashboard */}
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
           <Card className="border-0 shadow-lg">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
@@ -531,15 +534,15 @@ export default function TenantsPage() {
 
         {/* Search and Filters */}
         <Card className="border-0 shadow-lg">
-          <CardContent className="p-6">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
-              <div className="relative flex-1 lg:max-w-md">
+          <CardContent className="p-4 sm:p-6">
+            <div className="flex flex-col gap-4">
+              <div className="relative w-full lg:max-w-md">
                 <MagnifyingGlassIcon className="absolute w-5 h-5 text-gray-400 transform -translate-y-1/2 left-3 top-1/2" />
                 <Input
                   placeholder="Search tenants..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="h-12 pl-10 border-gray-200 focus:border-primary"
+                  className="h-12 pl-10 border-gray-200 focus:border-primary w-full"
                 />
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -747,21 +750,21 @@ export default function TenantsPage() {
               </Card>
             ) : (
               <>
-                <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-6">
                   {paginatedTenants.map((tenant) => (
                     <Card key={tenant.id} className="transition-shadow border-0 shadow-lg hover:shadow-xl">
                       <CardHeader className="pb-3">
-                        <div className="flex items-start justify-between">
+                        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                           <div className="flex items-center space-x-3">
                             {getTypeIcon(tenant.type)}
-                            <div>
-                              <CardTitle className="text-lg font-semibold text-gray-900">
+                            <div className="min-w-0 flex-1">
+                              <CardTitle className="text-lg font-semibold text-gray-900 truncate">
                                 {tenant.name}
                               </CardTitle>
-                              <p className="text-sm text-gray-500">@{tenant.slug}</p>
+                              <p className="text-sm text-gray-500 truncate">@{tenant.slug}</p>
                             </div>
                           </div>
-                          <div className="flex flex-col items-end space-y-1">
+                          <div className="flex flex-col sm:flex-row items-end sm:items-center gap-1 sm:gap-2">
                             <Badge className={`text-xs ${getTypeColor(tenant.type)}`}>
                               {tenant.type}
                             </Badge>
@@ -806,24 +809,24 @@ export default function TenantsPage() {
                           )}
                         </div>
 
-                        <div className="flex items-center space-x-2">
+                        <div className="flex flex-wrap items-center gap-1 sm:gap-2">
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="flex-1 h-8 hover:bg-blue-50"
+                            className="flex-1 min-w-[60px] h-8 hover:bg-blue-50"
                             onClick={() => console.log('View tenant:', tenant.id)}
                           >
                             <EyeIcon className="w-4 h-4 mr-1 text-blue-600" />
-                            View
+                            <span className="hidden sm:inline">View</span>
                           </Button>
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="flex-1 h-8 hover:bg-green-50"
+                            className="flex-1 min-w-[60px] h-8 hover:bg-green-50"
                             onClick={() => console.log('Edit tenant:', tenant.id)}
                           >
                             <PencilIcon className="w-4 h-4 mr-1 text-green-600" />
-                            Edit
+                            <span className="hidden sm:inline">Edit</span>
                           </Button>
                           <Button
                             variant="ghost"
@@ -843,43 +846,57 @@ export default function TenantsPage() {
 
                 {/* Pagination for Grid View */}
                 {totalPages > 1 && (
-                  <div className="flex items-center justify-between px-6 py-4 bg-white border-t shadow-lg rounded-2xl mt-6">
-                    <div className="text-sm text-gray-700">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between px-4 py-3 sm:px-6 sm:py-4 bg-white border-t shadow-lg rounded-2xl mt-6 gap-4">
+                    <div className="text-sm text-gray-700 text-center sm:text-left">
                       Showing {startIndex + 1} to {Math.min(endIndex, tenants.length)} of {tenants.length} tenants
                     </div>
-                    <div className="flex items-center space-x-2">
+                    <div className="flex flex-col sm:flex-row items-center gap-2">
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => handlePageChange(currentPage - 1)}
                         disabled={currentPage === 1}
-                        className="h-8"
+                        className="h-8 w-full sm:w-auto"
                       >
                         <ChevronLeftIcon className="w-4 h-4 mr-1" />
-                        Previous
+                        <span className="hidden sm:inline">Previous</span>
+                        <span className="sm:hidden">Prev</span>
                       </Button>
                       <div className="flex items-center space-x-1">
-                        {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-                          <Button
-                            key={page}
-                            variant={currentPage === page ? "default" : "ghost"}
-                            size="sm"
-                            onClick={() => handlePageChange(page)}
-                            className="w-8 h-8 p-0"
-                          >
-                            {page}
-                          </Button>
-                        ))}
+                        {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
+                          let pageNum;
+                          if (totalPages <= 5) {
+                            pageNum = i + 1;
+                          } else if (currentPage <= 3) {
+                            pageNum = i + 1;
+                          } else if (currentPage >= totalPages - 2) {
+                            pageNum = totalPages - 4 + i;
+                          } else {
+                            pageNum = currentPage - 2 + i;
+                          }
+                          return (
+                            <Button
+                              key={pageNum}
+                              variant={currentPage === pageNum ? "default" : "ghost"}
+                              size="sm"
+                              onClick={() => handlePageChange(pageNum)}
+                              className="w-8 h-8 p-0"
+                            >
+                              {pageNum}
+                            </Button>
+                          );
+                        })}
                       </div>
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => handlePageChange(currentPage + 1)}
                         disabled={currentPage === totalPages}
-                        className="h-8"
+                        className="h-8 w-full sm:w-auto"
                       >
-                        Next
-                        <ChevronRightIcon className="w-4 h-4 ml-1" />
+                        <span className="hidden sm:inline">Next</span>
+                        <span className="sm:hidden">Next</span>
+                        <ChevronRightIcon className="w-4 h-4 ml-1 sm:ml-0 sm:mr-1" />
                       </Button>
                     </div>
                   </div>
