@@ -17,6 +17,7 @@ import { getAuthUser } from '@/lib/auth'
 import { tenantApi } from '@/lib/api'
 import { toast } from 'sonner'
 import { validateTenantForm, parseJsonField } from './validation'
+import { TenantModals } from './modals'
 import { Tenant } from '@/types'
 import {
   BuildingOfficeIcon,
@@ -261,34 +262,343 @@ export default function TenantsPage() {
     try {
       setActionLoading(true)
       console.log(`Bulk ${action} for tenants:`, selectedTenants)
-      toast.success(`${action} completed for ${selectedTenants.length} tenants`)
-      setSelectedTenants([])
-      fetchTenants()
-    } catch (error) {
+
+      const { tenantApi } = await import('@/lib/api')
+      const promises = selectedTenants.map(tenantId => {
+        switch (action) {
+          case 'activate':
+            return tenantApi.updateTenant(tenantId, { status: 'ACTIVE' })
+          case 'deactivate':
+            return tenantApi.updateTenant(tenantId, { status: 'INACTIVE' })
+          case 'archive':
+            return tenantApi.archiveTenant(tenantId)
+          case 'unarchive':
+            return tenantApi.unarchiveTenant(tenantId)
+          case 'delete':
+            return tenantApi.deleteTenant(tenantId)
+          case 'permanent delete':
+            return tenantApi.deleteTenant(tenantId)
+          case 'restore':
+            return tenantApi.unarchiveTenant(tenantId)
+          default:
+            return Promise.resolve({ success: false, message: 'Unknown action' })
+        }
+      })
+
+      const results = await Promise.allSettled(promises)
+      const successful = results.filter(result => result.status === 'fulfilled').length
+      const failed = results.filter(result => result.status === 'rejected').length
+
+      if (successful > 0) {
+        toast.success(`${action} completed for ${successful} tenant${successful > 1 ? 's' : ''}`)
+        setSelectedTenants([])
+        fetchTenants()
+      }
+
+      if (failed > 0) {
+        toast.error(`Failed to ${action.toLowerCase()} ${failed} tenant${failed > 1 ? 's' : ''}`)
+      }
+    } catch (error: any) {
+      console.error(`Error during bulk ${action}:`, error)
       toast.error(`Failed to ${action.toLowerCase()} tenants`)
     } finally {
       setActionLoading(false)
     }
   }
 
+  // Modal opening functions
+  const openViewModal = (tenant: Tenant) => {
+    setCurrentTenant(tenant)
+    setShowViewModal(true)
+  }
+
   const openEditModal = (tenant: Tenant) => {
-    console.log('Edit tenant:', tenant.id)
+    setFormData({
+      name: tenant.name,
+      slug: tenant.slug,
+      domain: tenant.domain || '',
+      type: tenant.type,
+      tier: tenant.tier,
+      status: tenant.status,
+      maxUsers: tenant.maxUsers,
+      maxServices: tenant.maxServices,
+      storageLimitMb: tenant.storageLimitMb,
+      databaseName: tenant.databaseName,
+      databaseHost: tenant.databaseHost || '',
+      databasePort: tenant.databasePort || 3306,
+      primaryColor: tenant.primaryColor,
+      logoUrl: tenant.logoUrl || '',
+      faviconUrl: tenant.faviconUrl || '',
+      customDomain: tenant.customDomain || '',
+      settings: typeof tenant.settings === 'string' ? tenant.settings : JSON.stringify(tenant.settings || {}),
+      featureFlags: typeof tenant.featureFlags === 'string' ? tenant.featureFlags : JSON.stringify(tenant.featureFlags || {}),
+      integrations: typeof tenant.integrations === 'string' ? tenant.integrations : JSON.stringify(tenant.integrations || {}),
+    })
+    setCurrentTenant(tenant)
+    setShowEditModal(true)
   }
 
   const openDeleteModal = (tenant: Tenant) => {
-    console.log('Delete tenant:', tenant.id)
+    setCurrentTenant(tenant)
+    setShowDeleteModal(true)
   }
 
   const openArchiveModal = (tenant: Tenant) => {
-    console.log('Archive tenant:', tenant.id)
+    setCurrentTenant(tenant)
+    setShowArchiveModal(true)
   }
 
   const openUnarchiveModal = (tenant: Tenant) => {
-    console.log('Unarchive tenant:', tenant.id)
+    setCurrentTenant(tenant)
+    setShowUnarchiveModal(true)
   }
 
   const openPermanentDeleteModal = (tenant: Tenant) => {
-    console.log('Permanent delete tenant:', tenant.id)
+    setCurrentTenant(tenant)
+    setShowPermanentDeleteModal(true)
+  }
+
+  const openDuplicateModal = (tenant: Tenant) => {
+    setCurrentTenant(tenant)
+    setDuplicateData({
+      name: `${tenant.name} (Copy)`,
+      slug: `${tenant.slug}-copy`
+    })
+    setShowDuplicateModal(true)
+  }
+
+  // Form submission handlers
+  const handleSubmitAdd = async () => {
+    try {
+      setActionLoading(true)
+
+      if (!formData.name || !formData.slug || !formData.databaseName) {
+        toast.error('Please fill in all required fields')
+        return
+      }
+
+      const tenantData = {
+        name: formData.name,
+        slug: formData.slug,
+        type: formData.type,
+        domain: formData.domain,
+        tier: formData.tier,
+        status: formData.status,
+        primaryColor: formData.primaryColor,
+        logoUrl: formData.logoUrl,
+        maxUsers: formData.maxUsers,
+        maxServices: formData.maxServices,
+        storageLimitMb: formData.storageLimitMb,
+        databaseName: formData.databaseName,
+        databaseHost: formData.databaseHost,
+        databasePort: formData.databasePort,
+        customDomain: formData.customDomain,
+        settings: formData.settings ? JSON.parse(formData.settings) : {},
+        featureFlags: formData.featureFlags ? JSON.parse(formData.featureFlags) : {},
+        integrations: formData.integrations ? JSON.parse(formData.integrations) : {},
+      }
+
+      const response = await tenantApi.createTenant(tenantData)
+
+      if (response.success) {
+        toast.success('Tenant created successfully')
+        setShowAddModal(false)
+        resetForm()
+        fetchTenants()
+      } else {
+        toast.error(response.message || 'Failed to create tenant')
+      }
+    } catch (error: any) {
+      console.error('Error creating tenant:', error)
+      toast.error(error.response?.data?.message || 'Failed to create tenant')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleSubmitEdit = async () => {
+    if (!currentTenant) return
+
+    try {
+      setActionLoading(true)
+
+      if (!formData.name || !formData.slug || !formData.databaseName) {
+        toast.error('Please fill in all required fields')
+        return
+      }
+
+      const tenantData = {
+        name: formData.name,
+        slug: formData.slug,
+        domain: formData.domain,
+        type: formData.type,
+        tier: formData.tier,
+        status: formData.status,
+        maxUsers: formData.maxUsers,
+        maxServices: formData.maxServices,
+        storageLimitMb: formData.storageLimitMb,
+        databaseName: formData.databaseName,
+        databaseHost: formData.databaseHost,
+        databasePort: formData.databasePort,
+        primaryColor: formData.primaryColor,
+        logoUrl: formData.logoUrl,
+        faviconUrl: formData.faviconUrl,
+        customDomain: formData.customDomain,
+        settings: formData.settings ? JSON.parse(formData.settings) : {},
+        featureFlags: formData.featureFlags ? JSON.parse(formData.featureFlags) : {},
+        integrations: formData.integrations ? JSON.parse(formData.integrations) : {},
+      }
+
+      const response = await tenantApi.updateTenant(currentTenant.id, tenantData)
+
+      if (response.success) {
+        toast.success('Tenant updated successfully')
+        setShowEditModal(false)
+        fetchTenants()
+      } else {
+        toast.error(response.message || 'Failed to update tenant')
+      }
+    } catch (error: any) {
+      console.error('Error updating tenant:', error)
+      toast.error(error.response?.data?.message || 'Failed to update tenant')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!currentTenant) return
+
+    try {
+      setActionLoading(true)
+
+      const response = await tenantApi.deleteTenant(currentTenant.id)
+
+      if (response.success) {
+        toast.success('Tenant deleted successfully')
+        setShowDeleteModal(false)
+        fetchTenants()
+      } else {
+        toast.error(response.message || 'Failed to delete tenant')
+      }
+    } catch (error: any) {
+      console.error('Error deleting tenant:', error)
+      toast.error(error.response?.data?.message || 'Failed to delete tenant')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleConfirmArchive = async () => {
+    if (!currentTenant) return
+
+    try {
+      setActionLoading(true)
+
+      const response = await tenantApi.archiveTenant(currentTenant.id)
+
+      if (response.success) {
+        toast.success('Tenant archived successfully')
+        setShowArchiveModal(false)
+        fetchTenants()
+      } else {
+        toast.error(response.message || 'Failed to archive tenant')
+      }
+    } catch (error: any) {
+      console.error('Error archiving tenant:', error)
+      toast.error(error.response?.data?.message || 'Failed to archive tenant')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleConfirmUnarchive = async () => {
+    if (!currentTenant) return
+
+    try {
+      setActionLoading(true)
+
+      const response = await tenantApi.unarchiveTenant(currentTenant.id)
+
+      if (response.success) {
+        toast.success('Tenant restored successfully')
+        setShowUnarchiveModal(false)
+        fetchTenants()
+      } else {
+        toast.error(response.message || 'Failed to restore tenant')
+      }
+    } catch (error: any) {
+      console.error('Error restoring tenant:', error)
+      toast.error(error.response?.data?.message || 'Failed to restore tenant')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleConfirmPermanentDelete = async () => {
+    if (!currentTenant) return
+
+    try {
+      setActionLoading(true)
+
+      const response = await tenantApi.deleteTenant(currentTenant.id)
+
+      if (response.success) {
+        toast.success('Tenant permanently deleted')
+        setShowPermanentDeleteModal(false)
+        fetchTenants()
+      } else {
+        toast.error(response.message || 'Failed to delete tenant')
+      }
+    } catch (error: any) {
+      console.error('Error deleting tenant:', error)
+      toast.error(error.response?.data?.message || 'Failed to delete tenant')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleDuplicate = async () => {
+    if (!currentTenant || !duplicateData.name || !duplicateData.slug) return
+
+    try {
+      setActionLoading(true)
+
+      const newTenantData = {
+        name: duplicateData.name,
+        slug: duplicateData.slug,
+        type: currentTenant.type,
+        tier: currentTenant.tier,
+        status: 'PENDING',
+        primaryColor: currentTenant.primaryColor,
+        logoUrl: currentTenant.logoUrl,
+        maxUsers: currentTenant.maxUsers,
+        maxServices: currentTenant.maxServices,
+        storageLimitMb: currentTenant.storageLimitMb,
+        databaseName: `${duplicateData.slug}_db`,
+        databaseHost: currentTenant.databaseHost,
+        databasePort: currentTenant.databasePort,
+        customDomain: '',
+        settings: currentTenant.settings,
+        featureFlags: currentTenant.featureFlags,
+        integrations: currentTenant.integrations,
+      }
+
+      const response = await tenantApi.createTenant(newTenantData)
+
+      if (response.success) {
+        toast.success('Tenant duplicated successfully')
+        setShowDuplicateModal(false)
+        fetchTenants()
+      } else {
+        toast.error(response.message || 'Failed to duplicate tenant')
+      }
+    } catch (error: any) {
+      console.error('Error duplicating tenant:', error)
+      toast.error(error.response?.data?.message || 'Failed to duplicate tenant')
+    } finally {
+      setActionLoading(false)
+    }
   }
 
   // Helper functions to check tenant permissions
@@ -587,7 +897,7 @@ export default function TenantsPage() {
 
             {/* Bulk Actions Bar */}
             {selectedTenants.length > 0 && activeTab === 'active' && (
-              <div className="flex items-center justify-between p-3 mt-4 rounded-lg bg-blue-50">
+              <div className="flex flex-col sm:flex-row items-center justify-between p-3 mt-4 rounded-lg bg-blue-50 gap-2">
                 <div className="flex items-center space-x-2">
                   <Checkbox
                     checked
@@ -597,7 +907,7 @@ export default function TenantsPage() {
                     {selectedTenants.length} tenant{selectedTenants.length > 1 ? 's' : ''} selected
                   </span>
                 </div>
-                <div className="flex items-center space-x-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Button
                     variant="outline"
                     size="sm"
@@ -640,7 +950,7 @@ export default function TenantsPage() {
 
             {/* Bulk Actions for Archive */}
             {selectedTenants.length > 0 && activeTab === 'archive' && (
-              <div className="flex items-center justify-between p-3 mt-4 rounded-lg bg-blue-50">
+              <div className="flex flex-col sm:flex-row items-center justify-between p-3 mt-4 rounded-lg bg-blue-50 gap-2">
                 <div className="flex items-center space-x-2">
                   <Checkbox
                     checked
@@ -650,7 +960,7 @@ export default function TenantsPage() {
                     {selectedTenants.length} tenant{selectedTenants.length > 1 ? 's' : ''} selected
                   </span>
                 </div>
-                <div className="flex items-center space-x-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Button
                     variant="outline"
                     size="sm"
@@ -675,7 +985,7 @@ export default function TenantsPage() {
 
             {/* Bulk Actions for Trash */}
             {selectedTenants.length > 0 && activeTab === 'trash' && (
-              <div className="flex items-center justify-between p-3 mt-4 rounded-lg bg-blue-50">
+              <div className="flex flex-col sm:flex-row items-center justify-between p-3 mt-4 rounded-lg bg-blue-50 gap-2">
                 <div className="flex items-center space-x-2">
                   <Checkbox
                     checked
@@ -685,7 +995,7 @@ export default function TenantsPage() {
                     {selectedTenants.length} tenant{selectedTenants.length > 1 ? 's' : ''} selected
                   </span>
                 </div>
-                <div className="flex items-center space-x-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Button
                     variant="outline"
                     size="sm"
@@ -814,7 +1124,7 @@ export default function TenantsPage() {
                             variant="ghost"
                             size="sm"
                             className="flex-1 min-w-[60px] h-8 hover:bg-blue-50"
-                            onClick={() => console.log('View tenant:', tenant.id)}
+                            onClick={() => openViewModal(tenant)}
                           >
                             <EyeIcon className="w-4 h-4 mr-1 text-blue-600" />
                             <span className="hidden sm:inline">View</span>
@@ -823,7 +1133,7 @@ export default function TenantsPage() {
                             variant="ghost"
                             size="sm"
                             className="flex-1 min-w-[60px] h-8 hover:bg-green-50"
-                            onClick={() => console.log('Edit tenant:', tenant.id)}
+                            onClick={() => openEditModal(tenant)}
                           >
                             <PencilIcon className="w-4 h-4 mr-1 text-green-600" />
                             <span className="hidden sm:inline">Edit</span>
@@ -832,7 +1142,7 @@ export default function TenantsPage() {
                             variant="ghost"
                             size="sm"
                             className="w-8 h-8 p-0 hover:bg-purple-50"
-                            onClick={() => console.log('Duplicate tenant:', tenant.id)}
+                            onClick={() => openDuplicateModal(tenant)}
                             disabled={tenant.type === 'CORE'}
                             title={tenant.type === 'CORE' ? 'Cannot duplicate CORE tenant' : 'Duplicate tenant'}
                           >
@@ -1022,7 +1332,7 @@ export default function TenantsPage() {
                               variant="ghost"
                               size="sm"
                               className="w-8 h-8 p-0 hover:bg-blue-50"
-                              onClick={() => console.log('View tenant:', tenant.id)}
+                              onClick={() => openViewModal(tenant)}
                             >
                               <EyeIcon className="w-4 h-4 text-blue-600" />
                             </Button>
@@ -1042,7 +1352,7 @@ export default function TenantsPage() {
                                   variant="ghost"
                                   size="sm"
                                   className="w-8 h-8 p-0 hover:bg-purple-50"
-                                  onClick={() => console.log('Duplicate tenant:', tenant.id)}
+                                  onClick={() => openDuplicateModal(tenant)}
                                   disabled={tenant.type === 'CORE'}
                                   title={tenant.type === 'CORE' ? 'Cannot duplicate CORE tenant' : 'Duplicate tenant'}
                                 >
@@ -1106,7 +1416,7 @@ export default function TenantsPage() {
                                   variant="ghost"
                                   size="sm"
                                   className="w-8 h-8 p-0 hover:bg-purple-50"
-                                  onClick={() => console.log('Duplicate tenant:', tenant.id)}
+                                  onClick={() => openDuplicateModal(tenant)}
                                   disabled={tenant.type === 'CORE'}
                                   title={tenant.type === 'CORE' ? 'Cannot duplicate CORE tenant' : 'Duplicate tenant'}
                                 >
@@ -1134,43 +1444,57 @@ export default function TenantsPage() {
 
                 {/* Pagination for Table View */}
                 {totalPages > 1 && (
-                  <div className="flex items-center justify-between px-6 py-4 bg-white border-t mt-4">
-                    <div className="text-sm text-gray-700">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between px-4 py-3 sm:px-6 sm:py-4 bg-white border-t shadow-lg rounded-2xl mt-6 gap-4">
+                    <div className="text-sm text-gray-700 text-center sm:text-left">
                       Showing {startIndex + 1} to {Math.min(endIndex, tenants.length)} of {tenants.length} tenants
                     </div>
-                    <div className="flex items-center space-x-2">
+                    <div className="flex flex-col sm:flex-row items-center gap-2">
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => handlePageChange(currentPage - 1)}
                         disabled={currentPage === 1}
-                        className="h-8"
+                        className="h-8 w-full sm:w-auto"
                       >
                         <ChevronLeftIcon className="w-4 h-4 mr-1" />
-                        Previous
+                        <span className="hidden sm:inline">Previous</span>
+                        <span className="sm:hidden">Prev</span>
                       </Button>
                       <div className="flex items-center space-x-1">
-                        {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-                          <Button
-                            key={page}
-                            variant={currentPage === page ? "default" : "ghost"}
-                            size="sm"
-                            onClick={() => handlePageChange(page)}
-                            className="w-8 h-8 p-0"
-                          >
-                            {page}
-                          </Button>
-                        ))}
+                        {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
+                          let pageNum;
+                          if (totalPages <= 5) {
+                            pageNum = i + 1;
+                          } else if (currentPage <= 3) {
+                            pageNum = i + 1;
+                          } else if (currentPage >= totalPages - 2) {
+                            pageNum = totalPages - 4 + i;
+                          } else {
+                            pageNum = currentPage - 2 + i;
+                          }
+                          return (
+                            <Button
+                              key={pageNum}
+                              variant={currentPage === pageNum ? "default" : "ghost"}
+                              size="sm"
+                              onClick={() => handlePageChange(pageNum)}
+                              className="w-8 h-8 p-0"
+                            >
+                              {pageNum}
+                            </Button>
+                          );
+                        })}
                       </div>
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => handlePageChange(currentPage + 1)}
                         disabled={currentPage === totalPages}
-                        className="h-8"
+                        className="h-8 w-full sm:w-auto"
                       >
-                        Next
-                        <ChevronRightIcon className="w-4 h-4 ml-1" />
+                        <span className="hidden sm:inline">Next</span>
+                        <span className="sm:hidden">Next</span>
+                        <ChevronRightIcon className="w-4 h-4 ml-1 sm:ml-0 sm:mr-1" />
                       </Button>
                     </div>
                   </div>
@@ -1179,6 +1503,37 @@ export default function TenantsPage() {
             )}
           </>
         )}
+
+        {/* TenantModals component with all props */}
+        <TenantModals
+          showAddModal={showAddModal}
+          setShowAddModal={setShowAddModal}
+          showEditModal={showEditModal}
+          setShowEditModal={setShowEditModal}
+          showDeleteModal={showDeleteModal}
+          setShowDeleteModal={setShowDeleteModal}
+          showViewModal={showViewModal}
+          setShowViewModal={setShowViewModal}
+          showDuplicateModal={showDuplicateModal}
+          setShowDuplicateModal={setShowDuplicateModal}
+          currentTenant={currentTenant}
+          formData={formData}
+          setFormData={setFormData}
+          duplicateData={duplicateData}
+          setDuplicateData={setDuplicateData}
+          actionLoading={actionLoading}
+          formErrors={formErrors}
+          handleSubmitAdd={handleSubmitAdd}
+          handleSubmitEdit={handleSubmitEdit}
+          handleConfirmDelete={handleConfirmDelete}
+          handleDuplicate={handleDuplicate}
+          handleNameChange={handleNameChange}
+          resetForm={resetForm}
+          getTypeColor={getTypeColor}
+          getTierColor={getTierColor}
+          getStatusBadge={getStatusBadge}
+          getTypeIcon={getTypeIcon}
+        />
       </div>
     </DashboardLayout>
   )
