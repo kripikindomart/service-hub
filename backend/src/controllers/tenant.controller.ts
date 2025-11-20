@@ -4,6 +4,7 @@ import { prisma } from '../database/database.service';
 import { asyncHandler, AppError } from '../middleware/error.middleware';
 import { ResponseUtil } from '../utils/response.util';
 import { hasAdminAccess, hasPermission, isSuperAdmin } from '../utils/permissions.util';
+import { TenantStatus } from '@prisma/client';
 
 export class TenantController {
   // Test endpoint for debugging
@@ -33,7 +34,7 @@ export class TenantController {
       // Super admins can see all tenants in the system
       let where: any = {
         status: {
-          notIn: ['DELETED', 'ARCHIVED']  // Exclude DELETED and ARCHIVED tenants by default
+          notIn: ['DEACTIVATED']  // Exclude DEACTIVATED tenants by default
         }
       };
 
@@ -129,7 +130,7 @@ export class TenantController {
         deletedAt: null,
         tenant: {
           status: {
-            not: 'DELETED'  // Exclude DELETED tenants by default
+            not: 'DEACTIVATED'  // Exclude DEACTIVATED tenants by default
           }
         }
       };
@@ -301,21 +302,8 @@ export class TenantController {
       }
     });
 
-    // Get archived users count
-    const archivedUsersCount = await prisma.user.count({
-      where: {
-        archivedAt: { not: null },
-        deletedAt: null,
-        ...(isSuperAdmin ? {} : {
-          userAssignments: {
-            some: {
-              tenantId: primaryTenantId,
-              deletedAt: null
-            }
-          }
-        })
-      }
-    });
+    // Note: archivedAt field removed - using only deletedAt for soft deletes
+    // This section can be repurposed for other user statistics if needed
 
     // Get deleted users count
     const deletedUsersCount = await prisma.user.count({
@@ -338,8 +326,7 @@ export class TenantController {
       count: stat._count.id
     }));
 
-    // Add archived and deleted to status stats
-    byStatus.push({ status: 'ARCHIVED', count: archivedUsersCount });
+    // Add deleted to status stats (archivedAt field removed)
     byStatus.push({ status: 'DELETED', count: deletedUsersCount });
 
     const dashboardData = {
@@ -561,6 +548,7 @@ export class TenantController {
         settings: settings || {},
         featureFlags: featureFlags || {},
         status: 'ACTIVE',
+        trialUntil: type === 'TRIAL' ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) : undefined, // 30 days trial
         createdBy: adminId,
       },
       select: {
@@ -805,7 +793,7 @@ export class TenantController {
       await tx.tenant.update({
         where: { id },
         data: {
-          status: 'DELETED',
+          status: 'DEACTIVATED',
           updatedAt: new Date(),
           updatedBy: adminId,
         },
@@ -1462,7 +1450,7 @@ export class TenantController {
         slug: duplicateSlug,
         type: sourceTenant.type,
         tier: sourceTenant.tier,
-        status: 'PENDING', // Set to PENDING for duplicates
+        status: 'SETUP', // Set to SETUP for duplicates
         maxUsers: sourceTenant.maxUsers,
         maxServices: sourceTenant.maxServices,
         storageLimitMb: sourceTenant.storageLimitMb,
@@ -1561,9 +1549,7 @@ export class TenantController {
         maxUsers: role.maxUsers,
         tenantId: duplicateTenant.id,
         createdBy: adminId,
-        constraints: role.constraints,
         metadata: role.metadata,
-        weight: role.weight,
       }));
 
       await prisma.role.createMany({
@@ -1609,4 +1595,687 @@ export class TenantController {
       },
     }));
   });
+
+  // Super Admin Tenant Switching - Switch to any tenant without assignment
+  switchAsSuperAdmin = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.user!.id;
+    const { tenantId } = req.body;
+
+    if (!tenantId) {
+      throw new AppError('Tenant ID is required', 400);
+    }
+
+    // Verify user is super admin from CORE tenant
+    const isUserSuperAdmin = await isSuperAdmin(userId);
+    if (!isUserSuperAdmin) {
+      throw new AppError('Access denied. Super admin privileges required.', 403);
+    }
+
+    // Verify tenant exists
+    const targetTenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        type: true,
+        tier: true,
+        status: true,
+        primaryColor: true,
+        logoUrl: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    if (!targetTenant) {
+      throw new AppError('Tenant not found', 404);
+    }
+
+    // Check if tenant is active
+    if (targetTenant.status !== 'ACTIVE') {
+      throw new AppError('Cannot switch to inactive tenant', 400);
+    }
+
+    // For super admin switching, find the highest level role available in target tenant
+    // following the role hierarchy: SUPER_ADMIN > ADMIN > MANAGER > USER > GUEST
+    let targetRole = await prisma.role.findFirst({
+      where: {
+        tenantId: tenantId,
+        type: 'TENANT',
+        isActive: true
+      },
+      orderBy: [
+        { level: 'desc' },  // Highest level first
+        { priority: 'desc' }, // Then by priority
+        { createdAt: 'asc' }  // Then by creation date (earliest first)
+      ]
+    });
+
+    // Define role hierarchy in order of preference for super admin
+    const roleHierarchy = [
+      'SUPER_ADMIN',
+      'ADMIN',
+      'MANAGER',
+      'USER',
+      'GUEST'
+    ];
+
+    // If no tenant-specific role exists, try to find existing system roles or create appropriate role
+    if (!targetRole) {
+      // Try to find an existing role in the hierarchy order
+      for (const roleName of roleHierarchy) {
+        targetRole = await prisma.role.findFirst({
+          where: {
+            name: roleName,
+            type: 'TENANT',
+            isActive: true
+          }
+        });
+
+        if (targetRole) break;
+      }
+
+      // If still no role found, create a temporary ADMIN role for super admin access
+      if (!targetRole) {
+        targetRole = await prisma.role.create({
+          data: {
+            name: 'SUPER_ADMIN_TEMP',
+            displayName: 'Super Admin (Temporary Access)',
+            description: 'Temporary super admin access granted by system super admin',
+            type: 'TENANT',
+            level: 'SUPER_ADMIN', // Highest level for super admin access
+            tenantId: tenantId,
+            isSystemRole: false,
+            isActive: true,
+            priority: 100, // High priority for temporary role
+            color: '#DC2626', // Red color for super admin distinction
+            metadata: {
+              isTemporarySuperAdmin: true,
+              grantedBySuperAdmin: true,
+              grantedAt: new Date().toISOString(),
+              originalUserId: userId
+            }
+          }
+        });
+
+        console.log(`Created temporary super admin role ${targetRole.id} for tenant ${tenantId} by super admin ${userId}`);
+      }
+    }
+
+    // Create temporary assignment if it doesn't exist
+    const existingAssignment = await prisma.userAssignment.findFirst({
+      where: {
+        userId: userId,
+        tenantId: tenantId,
+      },
+    });
+
+    if (existingAssignment) {
+      // Update existing assignment
+      await prisma.userAssignment.update({
+        where: { id: existingAssignment.id },
+        data: {
+          roleId: targetRole.id,
+          status: 'ACTIVE',
+          updatedAt: new Date(),
+        },
+      });
+    } else {
+      // Create new assignment
+      await prisma.userAssignment.create({
+        data: {
+          userId: userId,
+          tenantId: tenantId,
+          roleId: targetRole.id,
+          status: 'ACTIVE',
+          isPrimary: false, // Don't change primary tenant
+          assignedBy: userId,
+          assignedAt: new Date(),
+        },
+      });
+    }
+
+    // Return tenant info with super admin context and actual assigned role
+    const response = {
+      ...targetTenant,
+      assignedRole: {
+        id: targetRole.id,
+        name: targetRole.name,
+        displayName: targetRole.displayName,
+        level: targetRole.level,
+        priority: targetRole.priority,
+        isTemporaryRole: targetRole.name === 'SUPER_ADMIN_TEMP',
+        color: targetRole.color
+      },
+      effectiveRole: targetRole.level, // The actual role level in the tenant
+      isSuperAdminSwitch: true, // Flag to indicate this is a super admin switch
+      roleHierarchy: roleHierarchy, // Show the hierarchy for reference
+      switchedAt: new Date().toISOString(),
+      permissions: {
+        canManageUsers: ['SUPER_ADMIN', 'ADMIN'].includes(targetRole.level),
+        canManageTenants: targetRole.level === 'SUPER_ADMIN',
+        canManageRoles: ['SUPER_ADMIN', 'ADMIN'].includes(targetRole.level),
+        canAccessAllFeatures: targetRole.level === 'SUPER_ADMIN'
+      }
+    };
+
+    console.log(`Super admin ${userId} switched to tenant ${tenantId} with role ${targetRole.name} (${targetRole.level})`);
+
+    res.json(ResponseUtil.success('Switched to tenant successfully as super admin', response));
+  });
+
+  // Get all available tenants for super admin switching
+  getAllTenantsForSuperAdmin = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.user!.id;
+    const { page = 1, limit = 50, search, type, status } = req.query;
+
+    // Verify user is super admin
+    const isUserSuperAdmin = await isSuperAdmin(userId);
+    if (!isUserSuperAdmin) {
+      throw new AppError('Access denied. Super admin privileges required.', 403);
+    }
+
+    const pageNumber = parseInt(page as string);
+    const limitNumber = parseInt(limit as string);
+    const skip = (pageNumber - 1) * limitNumber;
+
+    // Build where clause
+    let where: any = {};
+
+    if (search) {
+      where.OR = [
+        { name: { contains: search as string, mode: 'insensitive' } },
+        { slug: { contains: search as string, mode: 'insensitive' } },
+      ];
+    }
+
+    if (type) {
+      where.type = type as string;
+    }
+
+    if (status) {
+      where.status = status as string;
+    }
+
+    const [tenants, totalCount] = await Promise.all([
+      prisma.tenant.findMany({
+        where,
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          type: true,
+          tier: true,
+          status: true,
+          primaryColor: true,
+          logoUrl: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limitNumber,
+      }),
+      prisma.tenant.count({ where }),
+    ]);
+
+    // Get user count and storage used for each tenant
+    const tenantsWithStats = await Promise.all(
+      tenants.map(async (tenant) => {
+        const [userCount, hasAssignment] = await Promise.all([
+          prisma.userAssignment.count({
+            where: {
+              tenantId: tenant.id,
+              status: 'ACTIVE',
+            },
+          }),
+          prisma.userAssignment.findFirst({
+            where: {
+              userId: userId,
+              tenantId: tenant.id,
+              status: 'ACTIVE',
+            },
+            include: {
+              role: {
+                select: {
+                  displayName: true,
+                  level: true,
+                },
+              },
+            },
+          }),
+        ]);
+
+        return {
+          ...tenant,
+          userCount,
+          role: hasAssignment ? hasAssignment.role.displayName : 'Super Administrator',
+          level: hasAssignment ? hasAssignment.role.level : 'SUPER_ADMIN',
+          isCurrentlyAssigned: !!hasAssignment,
+          canSwitch: true, // Super admin can always switch
+        };
+      })
+    );
+
+    res.json(ResponseUtil.paginated('All tenants retrieved successfully', tenantsWithStats, pageNumber, limitNumber, totalCount));
+  });
+
+  // Check current user role level
+  getCurrentUserRoleLevel = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.user!.id;
+    const tenantId = req.headers['x-tenant-id'] as string;
+
+    // Define role hierarchy for reference
+    const roleHierarchy = [
+      'SUPER_ADMIN',
+      'ADMIN',
+      'MANAGER',
+      'USER',
+      'GUEST'
+    ];
+
+    // Get user's assignment for the current tenant (if specified) or primary assignment
+    let userAssignment;
+
+    if (tenantId) {
+      // Find assignment for specific tenant
+      userAssignment = await prisma.userAssignment.findFirst({
+        where: {
+          userId,
+          tenantId,
+          deletedAt: null,
+          status: 'ACTIVE'
+        },
+        include: {
+          role: {
+            select: {
+              id: true,
+              name: true,
+              level: true,
+              displayName: true,
+              type: true,
+              color: true,
+              priority: true,
+              metadata: true
+            },
+          },
+          tenant: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              type: true
+            },
+          },
+        },
+      });
+    } else {
+      // Get user's primary tenant assignment
+      userAssignment = await prisma.userAssignment.findFirst({
+        where: {
+          userId,
+          isPrimary: true,
+          deletedAt: null,
+          status: 'ACTIVE'
+        },
+        include: {
+          role: {
+            select: {
+              id: true,
+              name: true,
+              level: true,
+              displayName: true,
+              type: true,
+              color: true,
+              priority: true,
+              metadata: true
+            },
+          },
+          tenant: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              type: true
+            },
+          },
+        },
+      });
+    }
+
+    // If no specific assignment found, check any active assignment
+    if (!userAssignment) {
+      userAssignment = await prisma.userAssignment.findFirst({
+        where: {
+          userId,
+          deletedAt: null,
+          status: 'ACTIVE'
+        },
+        include: {
+          role: {
+            select: {
+              id: true,
+              name: true,
+              level: true,
+              displayName: true,
+              type: true,
+              color: true,
+              priority: true,
+              metadata: true
+            },
+          },
+          tenant: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              type: true
+            },
+          },
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+
+      if (!userAssignment) {
+        throw new AppError('No active tenant assignment found', 404);
+      }
+    }
+
+    // Check if this is a temporary super admin role
+    const isTemporarySuperAdmin = userAssignment.role.name === 'SUPER_ADMIN_TEMP';
+
+    // Get current role index in hierarchy
+    const currentRoleIndex = roleHierarchy.indexOf(userAssignment.role.level);
+    const nextHigherRole = currentRoleIndex > 0 ? roleHierarchy[currentRoleIndex - 1] : null;
+    const nextLowerRole = currentRoleIndex < roleHierarchy.length - 1 ? roleHierarchy[currentRoleIndex + 1] : null;
+
+    // Determine effective permissions based on role and tenant type
+    const isCoreSuperAdmin = userAssignment.role.level === 'SUPER_ADMIN' && userAssignment.tenant.type === 'CORE';
+    const isTenantSuperAdmin = userAssignment.role.level === 'SUPER_ADMIN' && userAssignment.tenant.type !== 'CORE';
+
+    const response = {
+      role: {
+        id: userAssignment.role.id,
+        name: userAssignment.role.name,
+        displayName: userAssignment.role.displayName,
+        level: userAssignment.role.level,
+        type: userAssignment.role.type,
+        color: userAssignment.role.color,
+        priority: userAssignment.role.priority
+      },
+      tenant: {
+        id: userAssignment.tenant.id,
+        name: userAssignment.tenant.name,
+        slug: userAssignment.tenant.slug,
+        type: userAssignment.tenant.type
+      },
+      hierarchy: {
+        currentLevel: currentRoleIndex + 1,
+        totalLevels: roleHierarchy.length,
+        currentRole: userAssignment.role.level,
+        nextHigherRole,
+        nextLowerRole,
+        fullHierarchy: roleHierarchy
+      },
+      permissions: {
+        isSuperAdmin: isCoreSuperAdmin || isTenantSuperAdmin,
+        isCoreSuperAdmin,
+        isTenantSuperAdmin,
+        isTemporarySuperAdmin,
+        canManageUsers: ['SUPER_ADMIN', 'ADMIN'].includes(userAssignment.role.level),
+        canManageTenants: userAssignment.role.level === 'SUPER_ADMIN',
+        canManageRoles: ['SUPER_ADMIN', 'ADMIN'].includes(userAssignment.role.level),
+        canSwitchTenants: isCoreSuperAdmin, // Only CORE super admins can switch tenants
+        canAccessAllFeatures: userAssignment.role.level === 'SUPER_ADMIN'
+      },
+      metadata: {
+        isTemporarySuperAdmin,
+        grantedBySuperAdmin: false,
+        grantedAt: null,
+        originalUserId: null
+      }
+    };
+
+    res.json(ResponseUtil.success('Current user role retrieved successfully', response));
+  });
+
+  // Get user's role in a specific tenant (for role inheritance)
+  getUserRoleInTenant = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const { tenantId } = req.params;
+    const userId = req.user!.id;
+
+    // Check if user is super admin
+    const isSuperAdminUser = await isSuperAdmin(userId);
+
+    let userRole: any;
+
+    if (isSuperAdminUser) {
+      // For super admins, check if they have a specific assignment in the tenant
+      // Otherwise, return default super admin role for that tenant
+      const userAssignment = await prisma.userAssignment.findFirst({
+        where: {
+          userId: userId,
+          tenantId: tenantId!,
+          status: 'ACTIVE',
+        },
+        include: {
+          role: {
+            select: {
+              id: true,
+              name: true,
+              displayName: true,
+              level: true,
+              type: true,
+              color: true,
+              priority: true
+            }
+          },
+          tenant: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              type: true
+            }
+          }
+        }
+      });
+
+      if (userAssignment) {
+        // Super admin has a specific assignment in this tenant
+        userRole = {
+          id: userAssignment.role.id,
+          name: userAssignment.role.name,
+          displayName: userAssignment.role.displayName,
+          level: userAssignment.role.level,
+          type: userAssignment.role.type,
+          color: userAssignment.role.color,
+          priority: userAssignment.role.priority,
+          permissions: [] // Will be populated based on role level
+        };
+      } else {
+        // Super admin accessing tenant without specific assignment
+        // Get tenant to determine default role
+        const tenant = await prisma.tenant.findUnique({
+          where: { id: tenantId! },
+          select: { id: true, name: true, slug: true, type: true }
+        });
+
+        if (!tenant) {
+          throw new AppError('Tenant not found', 404);
+        }
+
+        // For CORE tenant, super admin keeps super admin role
+        // For other tenants, assign default role based on tenant type
+        if (tenant.type === 'CORE') {
+          userRole = {
+            id: 'super-admin-core',
+            name: 'Super Admin',
+            displayName: 'Super Admin',
+            level: 'SUPER_ADMIN',
+            type: 'SYSTEM',
+            color: '#ef4444',
+            priority: 1,
+            permissions: []
+          };
+        } else {
+          // Default to ADMIN role for non-CORE tenants when no specific assignment
+          userRole = {
+            id: 'admin-default',
+            name: 'Administrator',
+            displayName: 'Administrator',
+            level: 'ADMIN',
+            type: 'TENANT',
+            color: '#3b82f6',
+            priority: 2,
+            permissions: []
+          };
+        }
+      }
+    } else {
+      // Regular user - get their assignment in the tenant
+      const userAssignment = await prisma.userAssignment.findFirst({
+        where: {
+          userId: userId,
+          tenantId: tenantId!,
+          status: 'ACTIVE',
+        },
+        include: {
+          role: {
+            select: {
+              id: true,
+              name: true,
+              displayName: true,
+              level: true,
+              type: true,
+              color: true,
+              priority: true
+            }
+          }
+        }
+      });
+
+      if (!userAssignment) {
+        // No assignment found - return default user role
+        userRole = {
+          id: 'user-default',
+          name: 'User',
+          displayName: 'User',
+          level: 'USER',
+          type: 'DEFAULT',
+          color: '#6b7280',
+          priority: 4,
+          permissions: []
+        };
+      } else {
+        userRole = {
+          id: userAssignment.role.id,
+          name: userAssignment.role.name,
+          displayName: userAssignment.role.displayName,
+          level: userAssignment.role.level,
+          type: userAssignment.role.type,
+          color: userAssignment.role.color,
+          priority: userAssignment.role.priority,
+          permissions: [] // Will be populated based on role level
+        };
+      }
+    }
+
+    // Populate permissions based on role level
+    const permissions = this.getPermissionsForRole(userRole.level);
+
+    const response = {
+      ...userRole,
+      permissions,
+      tenantId,
+      userId,
+      isSuperAdminOriginal: isSuperAdminUser
+    };
+
+    res.json(ResponseUtil.success('User role in tenant retrieved successfully', response));
+  });
+
+  // Check super admin status
+  checkSuperAdminStatus = async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json(ResponseUtil.error('User not authenticated'));
+      }
+
+      // Check if user is a super admin in the system
+      const userAssignment = await prisma.userAssignment.findFirst({
+        where: {
+          userId: userId,
+          role: {
+            level: 'SUPER_ADMIN'
+          }
+        },
+        include: {
+          role: {
+            select: {
+              id: true,
+              name: true,
+              level: true
+            }
+          },
+          tenant: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              type: true
+            }
+          }
+        }
+      });
+
+      const isSuperAdmin = !!userAssignment;
+      const isCoreSuperAdmin = userAssignment?.tenant?.type === 'CORE' || userAssignment?.tenant?.slug === 'system-core';
+
+      const response = {
+        isSuperAdmin,
+        isCoreSuperAdmin,
+        userRole: userAssignment?.role || null,
+        tenant: userAssignment?.tenant || null
+      };
+
+      res.json(ResponseUtil.success('Super admin status retrieved successfully', response));
+    } catch (error) {
+      console.error('Error checking super admin status:', error);
+      res.status(500).json(ResponseUtil.error('Internal server error'));
+    }
+  };
+
+  // Helper method to get permissions based on role level
+  private getPermissionsForRole = (roleLevel: string): any[] => {
+    const permissionMap: { [key: string]: string[] } = {
+      'SUPER_ADMIN': [
+        'access_manager',
+        'manage_tenants',
+        'manage_users',
+        'manage_roles',
+        'manage_settings',
+        'view_analytics',
+        'system_config'
+      ],
+      'ADMIN': [
+        'access_manager',
+        'manage_users',
+        'manage_roles',
+        'manage_settings',
+        'view_analytics'
+      ],
+      'MANAGER': [
+        'access_manager',
+        'manage_users'
+      ],
+      'USER': [
+        'view_dashboard'
+      ]
+    };
+
+    return permissionMap[roleLevel] || [];
+  };
 }

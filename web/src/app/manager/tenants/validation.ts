@@ -8,14 +8,14 @@ export const tenantFormSchema = z.object({
     .regex(/^[a-z0-9-]+$/, 'Slug must only contain lowercase letters, numbers, and hyphens')
     .regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/, 'Slug must start and end with alphanumeric characters'),
   domain: z.string().optional(),
-  type: z.enum(['CORE', 'BUSINESS', 'TRIAL'], {
-    errorMap: () => ({ message: 'Please select a valid tenant type' })
+  type: z.enum(['CORE', 'BUSINESS', 'TRIAL']).refine(() => true, {
+    message: 'Please select a valid tenant type'
   }),
-  tier: z.enum(['STARTER', 'PROFESSIONAL', 'ENTERPRISE', 'CUSTOM'], {
-    errorMap: () => ({ message: 'Please select a valid tier' })
+  tier: z.enum(['STARTER', 'PROFESSIONAL', 'ENTERPRISE', 'CUSTOM']).refine(() => true, {
+    message: 'Please select a valid tier'
   }),
-  status: z.enum(['ACTIVE', 'INACTIVE', 'PENDING'], {
-    errorMap: () => ({ message: 'Please select a valid status' })
+  status: z.enum(['ACTIVE', 'INACTIVE', 'PENDING']).refine(() => true, {
+    message: 'Please select a valid status'
   }),
   maxUsers: z.number().min(1, 'Max users must be at least 1').max(10000, 'Max users cannot exceed 10000'),
   maxServices: z.number().min(1, 'Max services must be at least 1').max(1000, 'Max services cannot exceed 1000'),

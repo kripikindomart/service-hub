@@ -158,9 +158,8 @@ export class AdminController {
     const skip = (pageNumber - 1) * limitNumber;
 
     const where: any = {
-      // Exclude deleted and archived users from active users list
+      // Exclude deleted users from active users list (archivedAt field removed)
       deletedAt: null,
-      archivedAt: null,
     };
 
     // Search across email and name
@@ -216,7 +215,6 @@ export class AdminController {
           updatedAt: true,
           lastLoginAt: true,
           deletedAt: true,
-          archivedAt: true,
           userAssignments: {
             select: {
               tenantId: true,
@@ -749,111 +747,9 @@ export class AdminController {
     res.json(ResponseUtil.success('User restored successfully', null));
   });
 
-  // Archive user
-  archiveUser = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-    const { id } = req.params;
-    const adminId = req.user!.id;
-
-    if (!id) {
-      throw new AppError('User ID is required', 400);
-    }
-
-    // Prevent self-archiving
-    if (id === adminId) {
-      throw new AppError('Cannot archive your own account', 400);
-    }
-
-    // Verify admin has permission to archive users
-    if (!await hasAdminAccess(adminId)) {
-      throw new AppError('Insufficient permissions to archive users', 403);
-    }
-
-    // Check if user exists
-    const existingUser = await prisma.user.findUnique({
-      where: { id, deletedAt: null, archivedAt: null },
-    });
-
-    if (!existingUser) {
-      throw new AppError('User not found or already archived/deleted', 404);
-    }
-
-    // Archive user
-    await prisma.user.update({
-      where: { id },
-      data: {
-        status: 'ARCHIVED',
-        archivedAt: new Date(),
-        updatedAt: new Date(),
-        updatedBy: adminId
-      }
-    });
-
-    // Deactivate all user assignments
-    await prisma.userAssignment.updateMany({
-      where: { userId: id },
-      data: {
-        status: 'INACTIVE',
-        updatedAt: new Date()
-      }
-    });
-
-    // Terminate all active sessions
-    await prisma.session.updateMany({
-      where: { userId: id, isActive: true },
-      data: {
-        isActive: false,
-        lastAccessAt: new Date()
-      }
-    });
-
-    res.json(ResponseUtil.success('User archived successfully', null));
-  });
-
-  // Unarchive user
-  unarchiveUser = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-    const { id } = req.params;
-    const adminId = req.user!.id;
-
-    if (!id) {
-      throw new AppError('User ID is required', 400);
-    }
-
-    // Verify admin has permission to unarchive users
-    if (!await hasAdminAccess(adminId)) {
-      throw new AppError('Insufficient permissions to unarchive users', 403);
-    }
-
-    // Check if user exists in archive
-    const existingUser = await prisma.user.findUnique({
-      where: { id, archivedAt: { not: null }, deletedAt: null },
-    });
-
-    if (!existingUser) {
-      throw new AppError('User not found in archive', 404);
-    }
-
-    // Unarchive user
-    await prisma.user.update({
-      where: { id },
-      data: {
-        status: 'ACTIVE',
-        archivedAt: null,
-        updatedAt: new Date(),
-        updatedBy: adminId
-      }
-    });
-
-    // Reactivate primary user assignment
-    await prisma.userAssignment.updateMany({
-      where: { userId: id, isPrimary: true },
-      data: {
-        status: 'ACTIVE',
-        updatedAt: new Date()
-      }
-    });
-
-    res.json(ResponseUtil.success('User unarchived successfully', null));
-  });
+  // Note: archiveUser and unarchiveUser functions removed
+// archivedAt field has been removed from schema
+// Users can only be deleted (soft delete) or restored from trash
 
   // Hard delete user (permanent deletion)
   permanentDeleteUser = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
@@ -1012,113 +908,9 @@ export class AdminController {
     res.json(ResponseUtil.paginated('Deleted users retrieved successfully', users, pageNumber, limitNumber, totalCount));
   });
 
-  // Get archived users
-  getArchivedUsers = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-    const adminId = req.user!.id;
-    const {
-      page = 1,
-      limit = 20,
-      search,
-      dateFrom,
-      dateTo,
-      sortBy = 'archivedAt',
-      sortOrder = 'desc'
-    } = req.query;
-
-    const pageNumber = parseInt(page as string) || 1;
-    const limitNumber = parseInt(limit as string) || 20;
-    const skip = (pageNumber - 1) * limitNumber;
-
-    // Verify admin has permission
-    if (!await hasAdminAccess(adminId)) {
-      throw new AppError('Insufficient permissions to view archived users', 403);
-    }
-
-    // Build where clause
-    const where: any = {
-      archivedAt: { not: null },
-      deletedAt: null
-    };
-
-    // Search functionality
-    if (search) {
-      const searchLower = (search as string).toLowerCase();
-      where.OR = [
-        { name: { contains: searchLower } },
-        { email: { contains: searchLower } }
-      ];
-    }
-
-    // Date range filter
-    if (dateFrom || dateTo) {
-      where.archivedAt = {};
-      if (dateFrom) where.archivedAt.gte = new Date(dateFrom as string);
-      if (dateTo) where.archivedAt.lte = new Date(dateTo as string);
-    }
-
-    // Build dynamic orderBy
-    const orderBy: any = {};
-    const validSortFields = ['archivedAt', 'createdAt', 'updatedAt', 'email', 'name', 'status'];
-    if (sortBy && typeof sortBy === 'string' && validSortFields.includes(sortBy)) {
-      orderBy[sortBy] = sortOrder === 'asc' ? 'asc' : 'desc';
-    } else {
-      orderBy.archivedAt = 'desc';
-    }
-
-    const [users, totalCount] = await Promise.all([
-      prisma.user.findMany({
-        where,
-        select: {
-          id: true,
-          email: true,
-          name: true,
-          status: true,
-          emailVerified: true,
-          phone: true,
-          archivedAt: true,
-          createdAt: true,
-          updatedAt: true,
-          lastLoginAt: true,
-          userAssignments: {
-            select: {
-              tenant: {
-                select: {
-                  id: true,
-                  name: true,
-                  slug: true,
-                  type: true,
-                  status: true,
-                },
-              },
-              role: {
-                select: {
-                  displayName: true,
-                  level: true,
-                },
-              },
-              status: true,
-              isPrimary: true
-            },
-          },
-        },
-        orderBy,
-        skip,
-        take: limitNumber,
-      }),
-      prisma.user.count({ where }),
-    ]);
-
-    const pagination = {
-      page: pageNumber,
-      limit: limitNumber,
-      total: totalCount,
-      totalPages: Math.ceil(totalCount / limitNumber),
-      hasNext: pageNumber * limitNumber < totalCount,
-      hasPrev: pageNumber > 1,
-    };
-
-    res.json(ResponseUtil.paginated('Archived users retrieved successfully', users, pageNumber, limitNumber, totalCount));
-  });
+  // Note: getArchivedUsers function removed
+// archivedAt field has been removed from schema
+// Use getDeletedUsers to view users in trash
 
   // Get all permissions
   getAllPermissions = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
@@ -1281,32 +1073,9 @@ export class AdminController {
             });
             break;
 
-          case 'archive':
-            // Prevent self-archiving
-            if (userId === adminId) {
-              throw new AppError('Cannot archive your own account', 400);
-            }
-
-            result = await prisma.user.update({
-              where: { id: userId },
-              data: {
-                archivedAt: new Date(),
-                updatedBy: adminId
-              },
-              select: { id: true, email: true, name: true, archivedAt: true }
-            });
-            break;
-
-          case 'unarchive':
-            result = await prisma.user.update({
-              where: { id: userId },
-              data: {
-                archivedAt: null,
-                updatedBy: adminId
-              },
-              select: { id: true, email: true, name: true, archivedAt: true }
-            });
-            break;
+          // Note: archive/unarchive actions removed
+        // archivedAt field has been removed from schema
+        // Use delete/restore actions instead
 
           case 'delete':
             // Prevent self-deletion

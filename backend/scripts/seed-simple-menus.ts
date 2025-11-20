@@ -1,0 +1,304 @@
+import { PrismaClient } from '@prisma/client'
+import { MenuLocation } from '@prisma/client'
+
+const prisma = new PrismaClient()
+
+// Simple menu structure based on actual frontend routes
+const MENU_STRUCTURE = {
+  // Header menus (public)
+  HEADER: [
+    {
+      name: 'home',
+      label: 'Home',
+      path: '/',
+      icon: '🏠',
+      order: 1,
+      description: 'Home page navigation'
+    },
+    {
+      name: 'features',
+      label: 'Features',
+      path: '#features',
+      icon: '⚡',
+      order: 2,
+      description: 'Platform features'
+    },
+    {
+      name: 'pricing',
+      label: 'Pricing',
+      path: '#pricing',
+      icon: '💰',
+      order: 3,
+      description: 'Pricing plans'
+    },
+    {
+      name: 'about',
+      label: 'About',
+      path: '#about',
+      icon: 'ℹ️',
+      order: 4,
+      description: 'About us'
+    },
+    {
+      name: 'contact',
+      label: 'Contact',
+      path: '#contact',
+      icon: '📧',
+      order: 5,
+      description: 'Contact information'
+    },
+    {
+      name: 'login',
+      label: 'Login',
+      path: '/login',
+      icon: '🔐',
+      order: 10,
+      description: 'Login to dashboard'
+    }
+  ],
+
+  // Sidebar menus (authenticated)
+  SIDEBAR: [
+    {
+      name: 'dashboard',
+      label: 'Dashboard',
+      path: '/dashboard',
+      icon: 'LayoutDashboard',
+      order: 1,
+      description: 'Main dashboard'
+    },
+    {
+      name: 'user_management',
+      label: 'User Management',
+      path: '/manager/users',
+      icon: 'Users',
+      order: 2,
+      description: 'Manage users',
+      children: [
+        {
+          name: 'user_list',
+          label: 'All Users',
+          path: '/manager/users',
+          icon: 'UserGroup',
+          order: 1,
+          description: 'View all users'
+        },
+        {
+          name: 'user_create',
+          label: 'Add User',
+          path: '/manager/users?action=create',
+          icon: 'UserPlus',
+          order: 2,
+          description: 'Create new user'
+        }
+      ]
+    },
+    {
+      name: 'rbac_management',
+      label: 'Access Control',
+      path: '/manager/rbac',
+      icon: 'Shield',
+      order: 3,
+      description: 'Roles and permissions',
+      children: [
+        {
+          name: 'roles',
+          label: 'Roles',
+          path: '/manager/rbac?tab=roles',
+          icon: 'UserCog',
+          order: 1,
+          description: 'Manage roles'
+        },
+        {
+          name: 'permissions',
+          label: 'Permissions',
+          path: '/manager/permissions',
+          icon: 'Key',
+          order: 2,
+          description: 'Manage permissions'
+        }
+      ]
+    },
+    {
+      name: 'tenant_management',
+      label: 'Tenant Management',
+      path: '/manager/tenants',
+      icon: 'BuildingOffice',
+      order: 4,
+      description: 'Manage tenants'
+    },
+    {
+      name: 'analytics',
+      label: 'Analytics',
+      path: '/manager/analytics',
+      icon: 'BarChart',
+      order: 5,
+      description: 'Platform analytics'
+    },
+    {
+      name: 'settings',
+      label: 'Settings',
+      path: '/manager/settings',
+      icon: 'Settings',
+      order: 10,
+      description: 'System settings'
+    },
+    {
+      name: 'profile',
+      label: 'My Profile',
+      path: '/profile',
+      icon: 'User',
+      order: 20,
+      description: 'User profile settings'
+    }
+  ],
+
+  // Footer menus (public)
+  FOOTER: [
+    {
+      name: 'about_footer',
+      label: 'About',
+      path: '/about',
+      icon: 'ℹ️',
+      order: 1,
+      description: 'About us page'
+    },
+    {
+      name: 'privacy',
+      label: 'Privacy Policy',
+      path: '/privacy',
+      icon: '🔒',
+      order: 2,
+      description: 'Privacy policy'
+    },
+    {
+      name: 'terms',
+      label: 'Terms of Service',
+      path: '/terms',
+      icon: '📄',
+      order: 3,
+      description: 'Terms of service'
+    },
+    {
+      name: 'support',
+      label: 'Support',
+      path: '/support',
+      icon: '🎧',
+      order: 4,
+      description: 'Support center'
+    },
+    {
+      name: 'contact_footer',
+      label: 'Contact',
+      path: '/contact',
+      icon: '📧',
+      order: 5,
+      description: 'Contact information'
+    }
+  ]
+}
+
+async function getTenantId(): Promise<string> {
+  const tenant = await prisma.tenant.findFirst({
+    where: { slug: 'techcorp' }
+  })
+
+  if (!tenant) {
+    throw new Error('TechCorp tenant not found. Please run tenant seeds first.')
+  }
+
+  return tenant.id
+}
+
+async function createMenus(tenantId: string) {
+  console.log('📋 Creating simple menus...')
+
+  let totalMenus = 0
+
+  for (const [location, menus] of Object.entries(MENU_STRUCTURE)) {
+    console.log(`Creating ${location} menus...`)
+
+    for (const menu of menus as any[]) {
+      const menuData = {
+        name: menu.name,
+        label: menu.label,
+        path: menu.path,
+        component: null,
+        url: null,
+        target: null,
+        parentId: null,
+        tenantId,
+        category: location === 'HEADER' ? 'MAIN_NAV' : location === 'SIDEBAR' ? 'ADMINISTRATION' : 'FOOTER',
+        location: location as MenuLocation,
+        isActive: true,
+        isPublic: location !== 'SIDEBAR',
+        order: menu.order,
+        description: menu.description,
+        cssClass: location === 'HEADER' ? 'nav-link' : location === 'SIDEBAR' ? 'sidebar-menu-item' : 'footer-link',
+        cssStyle: undefined,
+        attributes: undefined,
+        metadata: {
+          showOnMobile: true,
+          showOnDesktop: true
+        }
+      }
+
+      const createdMenu = await prisma.menu.create({ data: menuData })
+      totalMenus++
+
+      // Create children if any
+      if (menu.children) {
+        for (const child of menu.children) {
+          const childData = {
+            name: child.name,
+            label: child.label,
+            path: child.path,
+            component: null,
+            url: null,
+            target: null,
+            parentId: createdMenu.id,
+            tenantId,
+            category: location === 'HEADER' ? 'MAIN_NAV' : location === 'SIDEBAR' ? 'ADMINISTRATION' : 'FOOTER',
+            location: location as MenuLocation,
+            isActive: true,
+            isPublic: location !== 'SIDEBAR',
+            order: child.order,
+            description: child.description,
+            cssClass: location === 'HEADER' ? 'nav-link' : location === 'SIDEBAR' ? 'sidebar-menu-item' : 'footer-link',
+            cssStyle: undefined,
+            attributes: undefined,
+            metadata: {
+              showOnMobile: true,
+              showOnDesktop: true
+            }
+          }
+
+          await prisma.menu.create({ data: childData })
+          totalMenus++
+        }
+      }
+    }
+  }
+
+  console.log(`✅ Created ${totalMenus} menus`)
+}
+
+async function main() {
+  try {
+    const tenantId = await getTenantId()
+    await createMenus(tenantId)
+
+    console.log('\n🎉 Menu seeding completed successfully!')
+    console.log('\n📊 Summary:')
+    console.log(`- Menu locations: ${Object.keys(MENU_STRUCTURE).length}`)
+    console.log(`- Tenant ID: ${tenantId}`)
+
+  } catch (error) {
+    console.error('❌ Error seeding menus:', error)
+    throw error
+  } finally {
+    await prisma.$disconnect()
+  }
+}
+
+main().catch(console.error)

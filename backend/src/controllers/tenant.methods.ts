@@ -100,7 +100,7 @@ export class TenantMethods {
     const tenant = await prisma.tenant.update({
       where: { id },
       data: {
-        status: 'INACTIVE',
+        status: 'DEACTIVATED',
         updatedAt: new Date(),
         updatedBy: adminId,
       },

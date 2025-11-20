@@ -1,0 +1,695 @@
+import { PrismaClient, ServiceType, ServiceStatus, ModuleType, ModuleStatus } from '@prisma/client'
+
+const prisma = new PrismaClient()
+
+// ========================================
+// Service Definition Model
+// ========================================
+
+export interface ServiceDefinitionInput {
+  name: string
+  displayName: string
+  description?: string
+  version: string
+  type: ServiceType
+  category: string
+  icon?: string
+  color?: string
+  requiredPermissions: Record<string, any>
+  apiConfig: Record<string, any>
+  databaseConfig: Record<string, any>
+  uiConfig: Record<string, any>
+  documentation?: string
+  repository?: string
+  tags?: string[]
+  dependencies?: string[]
+  publishedBy: string
+}
+
+export interface ServiceDefinitionUpdate {
+  displayName?: string
+  description?: string
+  version?: string
+  status?: ServiceStatus
+  icon?: string
+  color?: string
+  requiredPermissions?: Record<string, any>
+  apiConfig?: Record<string, any>
+  databaseConfig?: Record<string, any>
+  uiConfig?: Record<string, any>
+  documentation?: string
+  repository?: string
+  tags?: string[]
+  dependencies?: string[]
+}
+
+export class ServiceDefinitionModel {
+  // Create new service definition
+  static async create(data: ServiceDefinitionInput) {
+    return await prisma.serviceDefinition.create({
+      data: {
+        ...data,
+        tags: data.tags || [],
+        dependencies: data.dependencies || []
+      },
+      include: {
+        modules: true,
+        tenantServices: {
+          include: {
+            tenant: true
+          }
+        }
+      }
+    })
+  }
+
+  // Get service definition by ID
+  static async findById(id: string) {
+    return await prisma.serviceDefinition.findUnique({
+      where: { id },
+      include: {
+        modules: {
+          orderBy: { order: 'asc' }
+        },
+        tenantServices: {
+          include: {
+            tenant: {
+              select: {
+                id: true,
+                name: true,
+                slug: true
+              }
+            }
+          }
+        }
+      }
+    })
+  }
+
+  // Get service definition by name and version
+  static async findByNameAndVersion(name: string, version: string) {
+    return await prisma.serviceDefinition.findUnique({
+      where: {
+        name_version: {
+          name,
+          version
+        }
+      },
+      include: {
+        modules: true
+      }
+    })
+  }
+
+  // Get all service definitions with filtering
+  static async findAll(filters: {
+    type?: ServiceType
+    status?: ServiceStatus
+    category?: string
+    search?: string
+    page?: number
+    limit?: number
+  } = {}) {
+    const {
+      type,
+      status,
+      category,
+      search,
+      page = 1,
+      limit = 20
+    } = filters
+
+    const where: any = {}
+
+    if (type) where.type = type
+    if (status) where.status = status
+    if (category) where.category = category
+    if (search) {
+      where.OR = [
+        { displayName: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } },
+        { name: { contains: search, mode: 'insensitive' } }
+      ]
+    }
+
+    const [services, total] = await Promise.all([
+      prisma.serviceDefinition.findMany({
+        where,
+        include: {
+          modules: {
+            select: {
+              id: true,
+              name: true,
+              displayName: true,
+              status: true
+            }
+          },
+          _count: {
+            select: {
+              tenantServices: true
+            }
+          }
+        },
+        orderBy: [
+          { category: 'asc' },
+          { displayName: 'asc' }
+        ],
+        skip: (page - 1) * limit,
+        take: limit
+      }),
+      prisma.serviceDefinition.count({ where })
+    ])
+
+    return {
+      services,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    }
+  }
+
+  // Update service definition
+  static async update(id: string, data: ServiceDefinitionUpdate) {
+    return await prisma.serviceDefinition.update({
+      where: { id },
+      data: {
+        ...data,
+        updatedAt: new Date()
+      },
+      include: {
+        modules: true
+      }
+    })
+  }
+
+  // Delete service definition
+  static async delete(id: string) {
+    // Check if service is in use by any tenant
+    const tenantServices = await prisma.tenantService.count({
+      where: { serviceId: id }
+    })
+
+    if (tenantServices > 0) {
+      throw new Error('Cannot delete service that is in use by tenants')
+    }
+
+    return await prisma.serviceDefinition.delete({
+      where: { id }
+    })
+  }
+
+  // Get service categories
+  static async getCategories() {
+    const categories = await prisma.serviceDefinition.groupBy({
+      by: ['category'],
+      _count: {
+        category: true
+      },
+      where: {
+        status: 'ACTIVE'
+      }
+    })
+
+    return categories.map(cat => ({
+      name: cat.category,
+      count: cat._count.category
+    }))
+  }
+
+  // Get service statistics
+  static async getStatistics() {
+    const [
+      totalServices,
+      activeServices,
+      servicesByType,
+      servicesByCategory
+    ] = await Promise.all([
+      prisma.serviceDefinition.count(),
+      prisma.serviceDefinition.count({
+        where: { status: 'ACTIVE' }
+      }),
+      prisma.serviceDefinition.groupBy({
+        by: ['type'],
+        _count: true
+      }),
+      prisma.serviceDefinition.groupBy({
+        by: ['category'],
+        _count: true,
+        orderBy: {
+          _count: {
+            category: 'desc'
+          }
+        },
+        take: 10
+      })
+    ])
+
+    return {
+      totalServices,
+      activeServices,
+      servicesByType,
+      topCategories: servicesByCategory
+    }
+  }
+
+  // Validate service configuration
+  static validateConfiguration(config: Record<string, any>) {
+    const required = ['name', 'displayName', 'type', 'category']
+    const missing = required.filter(field => !config[field])
+
+    if (missing.length > 0) {
+      throw new Error(`Missing required fields: ${missing.join(', ')}`)
+    }
+
+    // Validate service type
+    const validTypes = Object.values(ServiceType)
+    if (!validTypes.includes(config.type as ServiceType)) {
+      throw new Error(`Invalid service type. Must be one of: ${validTypes.join(', ')}`)
+    }
+
+    return true
+  }
+}
+
+// ========================================
+// Service Module Model
+// ========================================
+
+export interface ServiceModuleInput {
+  serviceId: string
+  name: string
+  displayName: string
+  description?: string
+  version: string
+  type: ModuleType
+  requiredPermissions: Record<string, any>
+  apiConfig: Record<string, any>
+  formConfig: Record<string, any>
+  outputConfig: Record<string, any>
+  menuConfig: Record<string, any>
+  componentPath?: string
+  routePath?: string
+  icon?: string
+  order?: number
+  parentModule?: string
+}
+
+export interface ServiceModuleUpdate {
+  displayName?: string
+  description?: string
+  version?: string
+  status?: ModuleStatus
+  type?: ModuleType
+  requiredPermissions?: Record<string, any>
+  apiConfig?: Record<string, any>
+  formConfig?: Record<string, any>
+  outputConfig?: Record<string, any>
+  menuConfig?: Record<string, any>
+  componentPath?: string
+  routePath?: string
+  icon?: string
+  order?: number
+  parentModule?: string
+}
+
+export class ServiceModuleModel {
+  // Create new service module
+  static async create(data: ServiceModuleInput) {
+    return await prisma.serviceModule.create({
+      data: {
+        ...data,
+        order: data.order || 0
+      },
+      include: {
+        service: {
+          select: {
+            id: true,
+            name: true,
+            displayName: true
+          }
+        }
+      }
+    })
+  }
+
+  // Get module by ID
+  static async findById(id: string) {
+    return await prisma.serviceModule.findUnique({
+      where: { id },
+      include: {
+        service: {
+          select: {
+            id: true,
+            name: true,
+            displayName: true,
+            type: true,
+            category: true
+          }
+        }
+      }
+    })
+  }
+
+  // Get modules by service ID
+  static async findByServiceId(serviceId: string, includeInactive = false) {
+    return await prisma.serviceModule.findMany({
+      where: {
+        serviceId,
+        ...(includeInactive ? {} : { status: 'ACTIVE' })
+      },
+      orderBy: {
+        order: 'asc'
+      },
+      include: {
+        service: {
+          select: {
+            id: true,
+            name: true,
+            displayName: true
+          }
+        }
+      }
+    })
+  }
+
+  // Get module tree structure
+  static async getModuleTree(serviceId: string) {
+    const modules = await this.findByServiceId(serviceId)
+
+    // Build hierarchical tree
+    const moduleMap = new Map()
+    const rootModules = []
+
+    // Create map of all modules
+    modules.forEach(module => {
+      moduleMap.set(module.id, {
+        ...module,
+        children: []
+      })
+    })
+
+    // Build tree structure
+    modules.forEach(module => {
+      const moduleNode = moduleMap.get(module.id)
+
+      if (module.parentModule && moduleMap.has(module.parentModule)) {
+        const parent = moduleMap.get(module.parentModule)
+        parent.children.push(moduleNode)
+      } else {
+        rootModules.push(moduleNode)
+      }
+    })
+
+    return rootModules
+  }
+
+  // Update module
+  static async update(id: string, data: ServiceModuleUpdate) {
+    return await prisma.serviceModule.update({
+      where: { id },
+      data: {
+        ...data,
+        updatedAt: new Date()
+      },
+      include: {
+        service: {
+          select: {
+            id: true,
+            name: true,
+            displayName: true
+          }
+        }
+      }
+    })
+  }
+
+  // Delete module
+  static async delete(id: string) {
+    // Check if module has children
+    const children = await prisma.serviceModule.count({
+      where: { parentModule: id }
+    })
+
+    if (children > 0) {
+      throw new Error('Cannot delete module that has child modules')
+    }
+
+    return await prisma.serviceModule.delete({
+      where: { id }
+    })
+  }
+
+  // Reorder modules
+  static async reorder(serviceId: string, moduleOrders: { id: string; order: number }[]) {
+    const updates = moduleOrders.map(({ id, order }) =>
+      prisma.serviceModule.update({
+        where: { id },
+        data: { order }
+      })
+    )
+
+    await prisma.$transaction(updates)
+
+    return await this.findByServiceId(serviceId)
+  }
+
+  // Get module menu configuration
+  static async getMenuConfiguration(serviceId: string) {
+    const modules = await prisma.serviceModule.findMany({
+      where: {
+        serviceId,
+        status: 'ACTIVE'
+      },
+      select: {
+        id: true,
+        name: true,
+        displayName: true,
+        menuConfig: true,
+        routePath: true,
+        icon: true,
+        order: true,
+        parentModule: true
+      },
+      orderBy: {
+        order: 'asc'
+      }
+    })
+
+    return modules.map(module => ({
+      id: module.id,
+      name: module.name,
+      displayName: module.displayName,
+      ...module.menuConfig,
+      route: module.routePath,
+      icon: module.icon,
+      order: module.order,
+      parent: module.parentModule
+    }))
+  }
+}
+
+// ========================================
+// Tenant Service Model
+// ========================================
+
+export interface TenantServiceInput {
+  tenantId: string
+  serviceId: string
+  configuration?: Record<string, any>
+  customSettings?: Record<string, any>
+  enabledModules?: string[]
+  accessRules?: Record<string, any>
+  rateLimiting?: Record<string, any>
+}
+
+export interface TenantServiceUpdate {
+  status?: 'ACTIVE' | 'INACTIVE' | 'PROVISIONING' | 'ERROR'
+  configuration?: Record<string, any>
+  customSettings?: Record<string, any>
+  enabledModules?: string[]
+  accessRules?: Record<string, any>
+  rateLimiting?: Record<string, any>
+}
+
+export class TenantServiceModel {
+  // Assign service to tenant
+  static async assign(data: TenantServiceInput) {
+    // Check if service exists and is active
+    const service = await ServiceDefinitionModel.findById(data.serviceId)
+    if (!service) {
+      throw new Error('Service not found')
+    }
+    if (service.status !== 'ACTIVE') {
+      throw new Error('Cannot assign inactive service')
+    }
+
+    // Check if already assigned
+    const existing = await prisma.tenantService.findUnique({
+      where: {
+        tenantId_serviceId: {
+          tenantId: data.tenantId,
+          serviceId: data.serviceId
+        }
+      }
+    })
+
+    if (existing) {
+      throw new Error('Service already assigned to tenant')
+    }
+
+    return await prisma.tenantService.create({
+      data: {
+        ...data,
+        enabledModules: data.enabledModules || service.modules.map(m => m.id),
+        provisionedAt: new Date()
+      },
+      include: {
+        tenant: {
+          select: {
+            id: true,
+            name: true,
+            slug: true
+          }
+        },
+        service: {
+          select: {
+            id: true,
+            name: true,
+            displayName: true,
+            version: true
+          }
+        }
+      }
+    })
+  }
+
+  // Get tenant services
+  static async findByTenantId(tenantId: string, includeInactive = false) {
+    return await prisma.tenantService.findMany({
+      where: {
+        tenantId,
+        ...(includeInactive ? {} : { status: 'ACTIVE' })
+      },
+      include: {
+        service: {
+          include: {
+            modules: true
+          }
+        }
+      },
+      orderBy: {
+        provisionedAt: 'desc'
+      }
+    })
+  }
+
+  // Get service tenants
+  static async findTenantsByServiceId(serviceId: string) {
+    return await prisma.tenantService.findMany({
+      where: {
+        serviceId,
+        status: 'ACTIVE'
+      },
+      include: {
+        tenant: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            status: true
+          }
+        }
+      },
+      orderBy: {
+        provisionedAt: 'desc'
+      }
+    })
+  }
+
+  // Update tenant service
+  static async update(tenantId: string, serviceId: string, data: TenantServiceUpdate) {
+    return await prisma.tenantService.update({
+      where: {
+        tenantId_serviceId: {
+          tenantId,
+          serviceId
+        }
+      },
+      data: {
+        ...data,
+        updatedAt: new Date()
+      },
+      include: {
+        tenant: {
+          select: {
+            id: true,
+            name: true,
+            slug: true
+          }
+        },
+        service: {
+          select: {
+            id: true,
+            name: true,
+            displayName: true,
+            version: true
+          }
+        }
+      }
+    })
+  }
+
+  // Remove service from tenant
+  static async remove(tenantId: string, serviceId: string) {
+    return await prisma.tenantService.delete({
+      where: {
+        tenantId_serviceId: {
+          tenantId,
+          serviceId
+        }
+      }
+    })
+  }
+
+  // Get tenant service statistics
+  static async getStatistics(tenantId: string) {
+    const [
+      totalServices,
+      activeServices,
+      servicesByType
+    ] = await Promise.all([
+      prisma.tenantService.count({
+        where: { tenantId }
+      }),
+      prisma.tenantService.count({
+        where: {
+          tenantId,
+          status: 'ACTIVE'
+        }
+      }),
+      prisma.tenantService.groupBy({
+        by: ['serviceId'],
+        _count: true,
+        where: {
+          tenantId,
+          status: 'ACTIVE'
+        }
+      })
+    ])
+
+    return {
+      totalServices,
+      activeServices,
+      servicesByType
+    }
+  }
+}
+
+export default {
+  ServiceDefinition: ServiceDefinitionModel,
+  ServiceModule: ServiceModuleModel,
+  TenantService: TenantServiceModel
+}

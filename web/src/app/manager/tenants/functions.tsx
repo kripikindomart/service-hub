@@ -287,7 +287,7 @@ export const handleConfirmDuplicate = async (
       slug: duplicateData.slug,
       type: currentTenant.type,
       tier: currentTenant.tier,
-      status: 'PENDING',
+      status: 'PENDING' as const,
       primaryColor: currentTenant.primaryColor,
       logoUrl: currentTenant.logoUrl,
       maxUsers: currentTenant.maxUsers,
@@ -338,7 +338,7 @@ export const handleBulkActions = async (
         case 'activate':
           return tenantApi.updateTenant(tenantId, { status: 'ACTIVE' })
         case 'deactivate':
-          return tenantApi.updateTenant(tenantId, { status: 'INACTIVE' })
+          return tenantApi.updateTenant(tenantId, { status: 'DEACTIVATED' })
         case 'archive':
           return tenantApi.archiveTenant(tenantId)
         case 'unarchive':

@@ -1,0 +1,514 @@
+import { z } from 'zod'
+import { ServiceType, ServiceStatus, ModuleType, ModuleStatus } from '@prisma/client'
+
+// ========================================
+// Base Validation Schemas
+// ========================================
+
+const slugSchema = z.string()
+  .min(2, 'Slug must be at least 2 characters')
+  .max(50, 'Slug must be less than 50 characters')
+  .regex(/^[a-z0-9-]+$/, 'Slug can only contain lowercase letters, numbers, and hyphens')
+
+const nameSchema = z.string()
+  .min(2, 'Name must be at least 2 characters')
+  .max(100, 'Name must be less than 100 characters')
+
+const displayNameSchema = z.string()
+  .min(2, 'Display name must be at least 2 characters')
+  .max(100, 'Display name must be less than 100 characters')
+
+const descriptionSchema = z.string()
+  .max(1000, 'Description must be less than 1000 characters')
+  .optional()
+
+const versionSchema = z.string()
+  .regex(/^\d+\.\d+\.\d+$/, 'Version must be in format x.y.z (semantic versioning)')
+
+const colorSchema = z.string()
+  .regex(/^#[0-9A-Fa-f]{6}$/, 'Color must be a valid hex color code')
+  .optional()
+
+const urlSchema = z.string()
+  .url('Must be a valid URL')
+  .optional()
+
+const jsonSchema = z.record(z.any())
+  .optional()
+
+const stringArraySchema = z.array(z.string())
+  .optional()
+
+// ========================================
+// Service Definition Schemas
+// ========================================
+
+export const ServiceDefinitionCreateSchema = z.object({
+  name: z.string()
+    .min(2, 'Service name must be at least 2 characters')
+    .max(100, 'Service name must be less than 100 characters')
+    .regex(/^[a-z0-9-]+$/, 'Service name can only contain lowercase letters, numbers, and hyphens'),
+
+  displayName: displayNameSchema,
+  description: descriptionSchema,
+  version: versionSchema,
+  type: z.nativeEnum(ServiceType, {
+    errorMap: (issue, ctx) => ({
+      message: `Invalid service type. Must be one of: ${Object.values(ServiceType).join(', ')}`
+    })
+  }),
+  category: z.string()
+    .min(2, 'Category must be at least 2 characters')
+    .max(50, 'Category must be less than 50 characters'),
+
+  icon: z.string()
+    .max(100, 'Icon name must be less than 100 characters')
+    .optional(),
+
+  color: colorSchema,
+
+  requiredPermissions: z.object({
+    global: stringArraySchema.default([]),
+    service: stringArraySchema.default([]),
+    module: stringArraySchema.default([]),
+    tenant: stringArraySchema.default([])
+  }).default({}),
+
+  apiConfig: z.object({
+    baseUrl: z.string().url('Base URL must be a valid URL'),
+    version: z.string().optional(),
+    endpoints: z.array(z.object({
+      path: z.string(),
+      method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH']),
+      description: z.string().optional()
+    })).default([]),
+    authentication: z.object({
+      type: z.enum(['NONE', 'API_KEY', 'BEARER', 'OAUTH2']),
+      config: jsonSchema
+    }).optional(),
+    rateLimiting: z.object({
+      requests: z.number().positive(),
+      window: z.number().positive(), // seconds
+      strategy: z.enum(['SLIDING', 'FIXED']).optional()
+    }).optional()
+  }),
+
+  databaseConfig: z.object({
+    type: z.enum(['SHARED', 'DEDICATED', 'HYBRID']),
+    isolation: z.enum(['TENANT_ISOLATED', 'SHARED_POOL']),
+    encryption: z.boolean().default(false),
+    backup: z.object({
+      enabled: z.boolean().default(true),
+      frequency: z.string().optional(), // cron format
+      retention: z.number().positive().optional() // days
+    }).optional()
+  }),
+
+  uiConfig: z.object({
+    icon: z.string().optional(),
+    theme: z.object({
+      primaryColor: colorSchema,
+      secondaryColor: colorSchema,
+      accentColor: colorSchema
+    }).optional(),
+    branding: z.object({
+      showLogo: z.boolean().default(true),
+      customCSS: z.string().optional()
+    }).optional(),
+    customComponents: z.array(z.object({
+      name: z.string(),
+      path: z.string(),
+      type: z.enum(['PAGE', 'WIDGET', 'MODAL'])
+    })).optional()
+  }),
+
+  documentation: urlSchema,
+  repository: urlSchema,
+  tags: stringArraySchema.default([]),
+  dependencies: stringArraySchema.default([]),
+  publishedBy: z.string().min(1, 'Published by is required')
+})
+
+export const ServiceDefinitionUpdateSchema = ServiceDefinitionCreateSchema.partial()
+
+export const ServiceDefinitionQuerySchema = z.object({
+  type: z.nativeEnum(ServiceType).optional(),
+  status: z.nativeEnum(ServiceStatus).optional(),
+  category: z.string().optional(),
+  search: z.string().optional(),
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().positive().max(100).default(20),
+  sortBy: z.enum(['name', 'displayName', 'category', 'createdAt', 'updatedAt']).default('createdAt'),
+  sortOrder: z.enum(['asc', 'desc']).default('desc')
+})
+
+// ========================================
+// Service Module Schemas
+// ========================================
+
+export const ServiceModuleCreateSchema = z.object({
+  serviceId: z.string().min(1, 'Service ID is required'),
+  name: z.string()
+    .min(2, 'Module name must be at least 2 characters')
+    .max(100, 'Module name must be less than 100 characters')
+    .regex(/^[a-z0-9-]+$/, 'Module name can only contain lowercase letters, numbers, and hyphens'),
+
+  displayName: displayNameSchema,
+  description: descriptionSchema,
+  version: versionSchema,
+  type: z.nativeEnum(ModuleType, {
+    errorMap: (issue, ctx) => ({
+      message: `Invalid module type. Must be one of: ${Object.values(ModuleType).join(', ')}`
+    })
+  }),
+
+  requiredPermissions: z.object({
+    read: stringArraySchema.default([]),
+    write: stringArraySchema.default([]),
+    admin: stringArraySchema.default([]),
+    delete: stringArraySchema.default([])
+  }).default({}),
+
+  apiConfig: z.object({
+    endpoint: z.string(),
+    method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH']),
+    headers: z.record(z.string()).optional(),
+    authentication: z.object({
+      type: z.enum(['NONE', 'API_KEY', 'BEARER', 'OAUTH2']),
+      config: jsonSchema
+    }).optional()
+  }),
+
+  formConfig: z.object({
+    inputSchema: z.object({
+      fields: z.array(z.object({
+        name: z.string(),
+        type: z.enum(['text', 'number', 'email', 'password', 'select', 'checkbox', 'radio', 'textarea', 'file', 'date']),
+        label: z.string(),
+        required: z.boolean().default(false),
+        validation: z.object({
+          min: z.number().optional(),
+          max: z.number().optional(),
+          pattern: z.string().optional(),
+          custom: z.string().optional()
+        }).optional(),
+        options: z.array(z.object({
+          value: z.string(),
+          label: z.string()
+        })).optional()
+      }))
+    }),
+    validation: z.object({
+      rules: z.array(z.object({
+        field: z.string(),
+        condition: z.string(),
+        message: z.string()
+      }))
+    }).optional(),
+    submitAction: z.object({
+      type: z.enum(['API', 'WEBHOOK', 'EMAIL', 'DATABASE']),
+      target: z.string(),
+      config: jsonSchema
+    })
+  }),
+
+  outputConfig: z.object({
+    schema: z.record(z.any()),
+    transformations: z.array(z.object({
+      source: z.string(),
+      target: z.string(),
+      type: z.enum(['MAPPING', 'FUNCTION', 'CONDITIONAL']),
+      config: jsonSchema
+    })).optional(),
+    notifications: z.array(z.object({
+      type: z.enum(['EMAIL', 'WEBHOOK', 'SMS', 'PUSH']),
+      target: z.string(),
+      template: z.string(),
+      config: jsonSchema
+    })).optional()
+  }),
+
+  menuConfig: z.object({
+    displayName: z.string(),
+    icon: z.string(),
+    path: z.string(),
+    order: z.number().int().default(0),
+    parent: z.string().optional(),
+    subItems: z.array(z.string()).optional(),
+    permissions: stringArraySchema.default([])
+  }),
+
+  componentPath: z.string().optional(),
+  routePath: z.string().optional(),
+  icon: z.string().optional(),
+  order: z.number().int().default(0),
+  parentModule: z.string().optional()
+})
+
+export const ServiceModuleUpdateSchema = ServiceModuleCreateSchema.partial()
+
+export const ServiceModuleQuerySchema = z.object({
+  serviceId: z.string().optional(),
+  type: z.nativeEnum(ModuleType).optional(),
+  status: z.nativeEnum(ModuleStatus).optional(),
+  search: z.string().optional(),
+  includeInactive: z.coerce.boolean().default(false)
+})
+
+// ========================================
+// Tenant Service Schemas
+// ========================================
+
+export const TenantServiceAssignSchema = z.object({
+  tenantId: z.string().min(1, 'Tenant ID is required'),
+  serviceId: z.string().min(1, 'Service ID is required'),
+
+  configuration: jsonSchema.default({}),
+
+  customSettings: z.object({
+    branding: z.object({
+      logo: z.string().optional(),
+      colors: z.object({
+        primary: colorSchema,
+        secondary: colorSchema
+      }).optional()
+    }).optional(),
+    features: z.object({
+      enabled: stringArraySchema,
+      disabled: stringArraySchema
+    }).optional(),
+    limits: z.object({
+      users: z.number().positive().optional(),
+      storage: z.number().positive().optional(),
+      requests: z.number().positive().optional()
+    }).optional()
+  }).default({}),
+
+  enabledModules: z.array(z.string()).optional(),
+
+  accessRules: z.object({
+    ipWhitelist: z.array(z.string()).optional(),
+    ipBlacklist: z.array(z.string()).optional(),
+    timeRestrictions: z.object({
+      allowedHours: z.array(z.number()).optional(),
+      allowedDays: z.array(z.number()).optional(),
+      timezone: z.string().optional()
+    }).optional()
+  }).default({}),
+
+  rateLimiting: z.object({
+    requests: z.number().positive(),
+    window: z.number().positive(),
+    strategy: z.enum(['SLIDING', 'FIXED']).optional(),
+    burst: z.number().positive().optional()
+  }).optional()
+})
+
+export const TenantServiceUpdateSchema = TenantServiceAssignSchema.partial()
+
+export const TenantServiceQuerySchema = z.object({
+  tenantId: z.string().optional(),
+  serviceId: z.string().optional(),
+  status: z.enum(['ACTIVE', 'INACTIVE', 'PROVISIONING', 'ERROR']).optional(),
+  includeInactive: z.coerce.boolean().default(false)
+})
+
+// ========================================
+// Service Integration Schemas
+// ========================================
+
+export const ServiceIntegrationCreateSchema = z.object({
+  tenantId: z.string().min(1, 'Tenant ID is required'),
+  serviceId: z.string().min(1, 'Service ID is required'),
+  externalService: z.string().min(1, 'External service name is required'),
+  integrationType: z.enum(['API', 'WEBHOOK', 'DATABASE', 'FILE_TRANSFER']),
+
+  configuration: z.object({
+    baseUrl: z.string().url().optional(),
+    version: z.string().optional(),
+    timeout: z.number().positive().optional(),
+    retryPolicy: z.object({
+      maxRetries: z.number().int().nonnegative().default(3),
+      backoffMultiplier: z.number().positive().default(2),
+      maxDelay: z.number().positive().optional()
+    }).optional()
+  }),
+
+  credentials: z.object({
+    type: z.enum(['API_KEY', 'BEARER', 'BASIC', 'OAUTH2', 'CUSTOM']),
+    data: z.record(z.string())
+  }),
+
+  webhookUrl: z.string().url().optional(),
+
+  syncFrequency: z.string().optional(), // cron format
+
+  healthCheck: z.object({
+    url: z.string().url().optional(),
+    interval: z.number().positive().default(300), // seconds
+    timeout: z.number().positive().default(10),
+    expectedStatus: z.number().int().min(200).max(599).default(200)
+  }).optional()
+})
+
+export const ServiceIntegrationUpdateSchema = ServiceIntegrationCreateSchema.partial()
+
+// ========================================
+// Bulk Operations Schemas
+// ========================================
+
+export const ServiceBulkActionSchema = z.object({
+  serviceIds: z.array(z.string()).min(1, 'At least one service ID is required'),
+  action: z.enum(['ACTIVATE', 'DEACTIVATE', 'DELETE', 'UPDATE_VERSION']),
+  data: jsonSchema.optional() // Additional data for action
+})
+
+export const ModuleBulkActionSchema = z.object({
+  moduleIds: z.array(z.string()).min(1, 'At least one module ID is required'),
+  action: z.enum(['ACTIVATE', 'DEACTIVATE', 'DELETE', 'REORDER']),
+  data: jsonSchema.optional() // Additional data for action
+})
+
+// ========================================
+// Validation Functions
+// ========================================
+
+export const validateServiceDependencies = async (
+  serviceData: any,
+  existingServices: string[] = []
+): Promise<{ valid: boolean; errors: string[] }> => {
+  const errors: string[] = []
+
+  // Check if all dependencies exist
+  if (serviceData.dependencies && serviceData.dependencies.length > 0) {
+    const missingDeps = serviceData.dependencies.filter(
+      dep => !existingServices.includes(dep)
+    )
+
+    if (missingDeps.length > 0) {
+      errors.push(`Missing dependencies: ${missingDeps.join(', ')}`)
+    }
+  }
+
+  // Check API configuration
+  if (serviceData.apiConfig) {
+    if (!serviceData.apiConfig.baseUrl) {
+      errors.push('API base URL is required')
+    }
+
+    if (serviceData.apiConfig.endpoints && serviceData.apiConfig.endpoints.length === 0) {
+      errors.push('At least one API endpoint must be defined')
+    }
+  }
+
+  // Check required permissions format
+  if (serviceData.requiredPermissions) {
+    const requiredTypes = ['global', 'service', 'module', 'tenant']
+    for (const type of requiredTypes) {
+      if (serviceData.requiredPermissions[type] &&
+          !Array.isArray(serviceData.requiredPermissions[type])) {
+        errors.push(`Required permissions.${type} must be an array`)
+      }
+    }
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors
+  }
+}
+
+export const validateModuleConfiguration = (
+  moduleData: any
+): { valid: boolean; errors: string[] } => {
+  const errors: string[] = []
+
+  // Check form configuration
+  if (moduleData.formConfig) {
+    if (moduleData.formConfig.inputSchema &&
+        (!moduleData.formConfig.inputSchema.fields ||
+         moduleData.formConfig.inputSchema.fields.length === 0)) {
+      errors.push('Form input schema must contain at least one field')
+    }
+
+    // Validate field definitions
+    if (moduleData.formConfig.inputSchema && moduleData.formConfig.inputSchema.fields) {
+      moduleData.formConfig.inputSchema.fields.forEach((field: any, index: number) => {
+        if (!field.name || !field.type || !field.label) {
+          errors.push(`Field ${index + 1} is missing required properties (name, type, label)`)
+        }
+
+        if (field.type === 'select' || field.type === 'radio') {
+          if (!field.options || field.options.length === 0) {
+            errors.push(`Field ${index + 1} of type ${field.type} must have options`)
+          }
+        }
+      })
+    }
+  }
+
+  // Check API configuration
+  if (moduleData.apiConfig) {
+    if (!moduleData.apiConfig.endpoint) {
+      errors.push('API endpoint is required')
+    }
+
+    if (!moduleData.apiConfig.method) {
+      errors.push('API method is required')
+    }
+  }
+
+  // Check menu configuration
+  if (moduleData.menuConfig) {
+    if (!moduleData.menuConfig.displayName || !moduleData.menuConfig.path) {
+      errors.push('Menu configuration must include displayName and path')
+    }
+
+    if (moduleData.menuConfig.order && typeof moduleData.menuConfig.order !== 'number') {
+      errors.push('Menu order must be a number')
+    }
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors
+  }
+}
+
+export const validateTenantServiceLimits = (
+  tenantId: string,
+  serviceId: string,
+  currentServices: any[]
+): { valid: boolean; errors: string[] } => {
+  const errors: string[] = []
+
+  // Check if service is already assigned
+  const existingAssignment = currentServices.find(
+    service => service.serviceId === serviceId
+  )
+
+  if (existingAssignment) {
+    errors.push('Service is already assigned to this tenant')
+  }
+
+  // Additional limit checks would go here based on subscription limits
+  // This would typically involve checking the tenant's subscription plan
+
+  return {
+    valid: errors.length === 0,
+    errors
+  }
+}
+
+// Export validation schemas
+export {
+  slugSchema,
+  nameSchema,
+  displayNameSchema,
+  descriptionSchema,
+  versionSchema,
+  colorSchema,
+  urlSchema,
+  jsonSchema,
+  stringArraySchema
+}

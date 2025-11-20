@@ -12,6 +12,7 @@ export const createHandlers = (
   setShowDuplicateModal: any,
   setActionLoading: any,
   setShowAddModal: any,
+  setShowViewModal: any,
   resetForm: any,
   fetchTenants: any,
   setSelectedTenants: any,
@@ -287,7 +288,7 @@ export const createHandlers = (
         slug: duplicateData.slug,
         type: currentTenant.type,
         tier: currentTenant.tier,
-        status: 'PENDING',
+        status: 'PENDING' as const,
         primaryColor: currentTenant.primaryColor,
         logoUrl: currentTenant.logoUrl,
         maxUsers: currentTenant.maxUsers,
@@ -329,9 +330,9 @@ export const createHandlers = (
       const promises = selectedTenants.map(tenantId => {
         switch (action) {
           case 'activate':
-            return tenantApi.updateTenant(tenantId, { status: 'ACTIVE' })
+            return tenantApi.updateTenant(tenantId, { status: 'ACTIVE' as const })
           case 'deactivate':
-            return tenantApi.updateTenant(tenantId, { status: 'INACTIVE' })
+            return tenantApi.updateTenant(tenantId, { status: 'INACTIVE' as const })
           case 'archive':
             return tenantApi.archiveTenant(tenantId)
           case 'unarchive':

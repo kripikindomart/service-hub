@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { getAuthUser } from '@/lib/auth'
 import { adminApi, tenantApi } from '@/lib/api'
+import TenantSelector from '@/components/TenantSelector'
 import {
   UserGroupIcon,
   CheckCircleIcon,
@@ -22,6 +23,7 @@ import { TrendingUp, TrendingDown, Users, Activity, DollarSign } from 'lucide-re
 
 export default function DashboardPage() {
   const [user, setUser] = useState<any>(null)
+  const [currentTenant, setCurrentTenant] = useState<any>(null)
   const [stats, setStats] = useState<any>(null)
   const [dashboardData, setDashboardData] = useState<any>(null)
   const [recentActivity, setRecentActivity] = useState([
@@ -72,6 +74,13 @@ export default function DashboardPage() {
       }
       setUser(authUser)
 
+      // Get current tenant from localStorage
+      const tenantStr = localStorage.getItem('currentTenant')
+      if (tenantStr) {
+        const tenantData = JSON.parse(tenantStr)
+        setCurrentTenant(tenantData)
+      }
+
       try {
         setLoading(true)
 
@@ -116,6 +125,25 @@ export default function DashboardPage() {
 
     fetchData()
   }, [router])
+
+  // Listen for tenant changes
+  useEffect(() => {
+    const handleTenantChange = () => {
+      const tenantStr = localStorage.getItem('currentTenant')
+      if (tenantStr) {
+        const tenantData = JSON.parse(tenantStr)
+        setCurrentTenant(tenantData)
+      }
+    }
+
+    window.addEventListener('tenantChanged', handleTenantChange)
+    window.addEventListener('storage', handleTenantChange)
+
+    return () => {
+      window.removeEventListener('tenantChanged', handleTenantChange)
+      window.removeEventListener('storage', handleTenantChange)
+    }
+  }, [])
 
   const handleRefresh = async () => {
     setRefreshing(true)
@@ -169,13 +197,55 @@ export default function DashboardPage() {
         {/* Welcome Section */}
         <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-lg border border-white/20">
           <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-black text-gradient mb-2">
-                Welcome back, {user.name}!
-              </h1>
+            <div className="flex-1">
+              <div className="flex items-center space-x-4 mb-3">
+                <h1 className="text-3xl font-black text-gradient mb-0">
+                  Welcome back, {user.name}!
+                </h1>
+                <TenantSelector />
+              </div>
               <p className="text-gray-600 text-lg">
                 Here's what's happening with your platform today.
               </p>
+
+              {/* Current Tenant Information */}
+              {currentTenant ? (
+                <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                  <div className="flex items-center space-x-3">
+                    <BuildingOfficeIcon className="w-6 h-6 text-blue-600" />
+                    <div>
+                      <p className="text-sm font-semibold text-blue-900">
+                        Current Tenant: {currentTenant.name}
+                      </p>
+                      <div className="flex items-center space-x-4 mt-1">
+                        <span className="text-xs text-blue-700">
+                          Role: {currentTenant.role || 'Admin'}
+                        </span>
+                        <span className="text-xs text-blue-700">
+                          Type: {currentTenant.type || 'Enterprise'}
+                        </span>
+                        <span className="text-xs text-blue-700">
+                          Domain: {currentTenant.domain || currentTenant.slug}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <div className="flex items-center space-x-3">
+                    <ClockIcon className="w-6 h-6 text-yellow-600" />
+                    <div>
+                      <p className="text-sm font-semibold text-yellow-900">
+                        No Tenant Selected
+                      </p>
+                      <p className="text-xs text-yellow-700">
+                        Please select a tenant to access tenant-specific features
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
             <div className="flex items-center space-x-4">
               <Button

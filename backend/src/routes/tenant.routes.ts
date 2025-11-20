@@ -20,6 +20,9 @@ router.get('/dashboard/stats', asyncHandler(tenantController.getDashboardStats))
 // Get current tenant roles (for debugging)
 router.get('/current-roles', asyncHandler(tenantController.getCurrentTenantRoles));
 
+// Get current user role level
+router.get('/current-role', asyncHandler(tenantController.getCurrentUserRoleLevel));
+
 // Archive and trash endpoints (must come before /:id route)
 // Get archived tenants
 router.get('/archived', asyncHandler(tenantArchiveController.getArchivedTenants));
@@ -32,6 +35,9 @@ router.get('/:tenantId/roles', asyncHandler(tenantController.getTenantRoles));
 
 // Get tenant users
 router.get('/:tenantId/users', asyncHandler(tenantController.getTenantUsers));
+
+// Get user's role in specific tenant (for role inheritance)
+router.get('/:tenantId/user-role', asyncHandler(tenantController.getUserRoleInTenant));
 
 // Deactivate tenant user
 router.post('/:tenantId/users/:userId/deactivate', asyncHandler(tenantController.deactivateTenantUser));
@@ -63,6 +69,11 @@ router.post('/:id/deactivate', asyncHandler(TenantMethods.deactivateTenant));
 
 // Duplicate tenant
 router.post('/:tenantId/duplicate', asyncHandler(tenantController.duplicateTenant));
+
+// Super Admin tenant switching endpoints
+router.post('/super-admin/switch', asyncHandler(tenantController.switchAsSuperAdmin));
+router.get('/super-admin/all-tenants', asyncHandler(tenantController.getAllTenantsForSuperAdmin));
+router.get('/super-admin/check-status', asyncHandler(tenantController.checkSuperAdminStatus));
 
 // Archive tenant
 router.post('/:id/archive', asyncHandler(tenantArchiveController.archiveTenant));

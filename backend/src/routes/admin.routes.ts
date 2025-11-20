@@ -17,9 +17,6 @@ router.get('/users', asyncHandler(adminController.getAllUsers));
 // Get deleted users (trash)
 router.get('/users/deleted', asyncHandler(adminController.getDeletedUsers));
 
-// Get archived users
-router.get('/users/archived', asyncHandler(adminController.getArchivedUsers));
-
 // Export users data
 router.get('/users/export', asyncHandler(adminController.exportUsers));
 
@@ -41,11 +38,8 @@ router.delete('/users/:id', asyncHandler(adminController.deleteUser));
 // Restore user from trash
 router.post('/users/:id/restore', asyncHandler(adminController.restoreUser));
 
-// Archive user
-router.post('/users/:id/archive', asyncHandler(adminController.archiveUser));
-
-// Unarchive user
-router.post('/users/:id/unarchive', asyncHandler(adminController.unarchiveUser));
+// Note: Archive/Unarchive functions removed
+// Use delete/restore for user lifecycle management
 
 // Permanent delete user (SUPER_ADMIN only)
 router.delete('/users/:id/permanent', asyncHandler(adminController.permanentDeleteUser));

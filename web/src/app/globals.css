@@ -12,6 +12,7 @@
     --popover-foreground: 240 10% 3.9%;
     --primary: 262.1 83.3% 57.8%;
     --primary-foreground: 210 40% 98%;
+    --primary-color: #8b5cf6; /* Default purple color */
     --secondary: 220 14.3% 95.9%;
     --secondary-foreground: 220.9 39.3% 11%;
     --muted: 220 14.3% 95.9%;

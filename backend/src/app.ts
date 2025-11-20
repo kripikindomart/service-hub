@@ -15,6 +15,8 @@ import authRoutes from './routes/auth.routes';
 import userRoutes from './routes/user.routes';
 import tenantRoutes from './routes/tenant.routes';
 import adminRoutes from './routes/admin.routes';
+import roleRoutes from './routes/role.routes';
+import menuRoutes, { publicMenuRoutes } from './routes/menu.routes';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -62,10 +64,17 @@ app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/users', authMiddleware, userRoutes);
 app.use('/api/v1/tenants', authMiddleware, tenantRoutes);
 app.use('/api/v1/admin', authMiddleware, adminRoutes);
+app.use('/api/v1/roles', authMiddleware, roleRoutes);
+
+// Public menu routes (no authentication required) - must be before private routes
+app.use('/api/v1/menus/public', publicMenuRoutes);
+
+// Private menu routes (authentication required)
+app.use('/api/v1/menus', authMiddleware, menuRoutes);
 
 
 
-// Test route tepat sebelum 404 handler
+// Test route before 404 handler
 app.get('/test-sebelum-404', (req, res) => {
   res.json({
     success: true,

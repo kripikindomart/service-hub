@@ -48,7 +48,7 @@ export class TenantArchiveController {
     await prisma.tenant.update({
       where: { id },
       data: {
-        status: 'ARCHIVED',
+        status: 'DEACTIVATED',
         updatedAt: new Date(),
         updatedBy: adminId,
       },
@@ -99,7 +99,7 @@ export class TenantArchiveController {
       throw new AppError('Archived tenant not found', 404);
     }
 
-    if (existingTenant.status !== 'ARCHIVED') {
+    if (existingTenant.status !== 'DEACTIVATED') {
       throw new AppError(`Cannot unarchive tenant with status '${existingTenant.status}'. Only archived tenants can be unarchived.`, 400);
     }
 
@@ -165,7 +165,7 @@ export class TenantArchiveController {
 
     // Build where clause for archived tenants
     let where: any = {
-      status: 'ARCHIVED',
+      status: 'DEACTIVATED',
     };
 
     if (search) {
@@ -249,7 +249,7 @@ export class TenantArchiveController {
 
     // Build where clause for deleted tenants
     let where: any = {
-      status: 'DELETED'
+      status: 'DEACTIVATED'
     };
 
     if (search) {
@@ -346,7 +346,7 @@ export class TenantArchiveController {
       throw new AppError('Deleted tenant not found', 404);
     }
 
-    if (existingTenant.status !== 'DELETED') {
+    if (existingTenant.status !== 'DEACTIVATED') {
       throw new AppError(`Cannot permanently delete tenant with status '${existingTenant.status}'. Only deleted tenants can be permanently deleted.`, 400);
     }
 

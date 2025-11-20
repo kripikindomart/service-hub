@@ -7,6 +7,7 @@ import toast from 'react-hot-toast'
 import { authApi } from '@/lib/api'
 import { setAuthData } from '@/lib/auth'
 import { LoginRequest } from '@/types'
+import { useAuthStore } from '@/stores/authStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -16,6 +17,7 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const router = useRouter()
+  const { setUser, setCurrentTenant } = useAuthStore()
   const {
     register,
     handleSubmit,
@@ -52,6 +54,22 @@ export default function LoginPage() {
           response.data.tokens.refreshToken,
           response.data.user
         )
+
+        // Set user and current tenant in auth store
+        setUser(response.data.user)
+
+        // Set current tenant from response
+        if (response.data.currentTenant) {
+          setCurrentTenant(response.data.currentTenant)
+          localStorage.setItem('currentTenant', JSON.stringify(response.data.currentTenant))
+          console.log('Set current tenant:', response.data.currentTenant)
+        } else if (response.data.tenants && response.data.tenants.length > 0) {
+          const firstTenant = response.data.tenants[0]
+          setCurrentTenant(firstTenant)
+          localStorage.setItem('currentTenant', JSON.stringify(firstTenant))
+          console.log('Set current tenant:', firstTenant)
+        }
+
         toast.success('Welcome! Demo login successful!')
         router.push('/dashboard')
       } else {
@@ -63,12 +81,6 @@ export default function LoginPage() {
     } finally {
       setIsLoading(false)
     }
-  }
-
-  // Function to copy credentials to clipboard
-  const copyToClipboard = (text: string, label: string) => {
-    navigator.clipboard.writeText(text)
-    toast.success(`${label} copied to clipboard!`)
   }
 
   const onSubmit = async (data: LoginRequest) => {
@@ -84,6 +96,22 @@ export default function LoginPage() {
           response.data.tokens.refreshToken,
           response.data.user
         )
+
+        // Set user and current tenant in auth store
+        setUser(response.data.user)
+
+        // Set current tenant from response
+        if (response.data.currentTenant) {
+          setCurrentTenant(response.data.currentTenant)
+          localStorage.setItem('currentTenant', JSON.stringify(response.data.currentTenant))
+          console.log('Set current tenant:', response.data.currentTenant)
+        } else if (response.data.tenants && response.data.tenants.length > 0) {
+          const firstTenant = response.data.tenants[0]
+          setCurrentTenant(firstTenant)
+          localStorage.setItem('currentTenant', JSON.stringify(firstTenant))
+          console.log('Set current tenant:', firstTenant)
+        }
+
         toast.success('Welcome back! Login successful!')
         router.push('/dashboard')
       } else {
@@ -95,6 +123,12 @@ export default function LoginPage() {
     } finally {
       setIsLoading(false)
     }
+  }
+
+  // Function to copy credentials to clipboard
+  const copyToClipboard = (text: string, label: string) => {
+    navigator.clipboard.writeText(text)
+    toast.success(`${label} copied to clipboard!`)
   }
 
   return (

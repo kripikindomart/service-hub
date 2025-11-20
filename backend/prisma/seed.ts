@@ -1,4 +1,4 @@
-import { PrismaClient, EntityStatus, TenantType, SubscriptionTier, PermissionScope, AssignmentStatus } from '@prisma/client';
+import { PrismaClient, EntityStatus, TenantStatus, TenantType, SubscriptionTier, PermissionScope, AssignmentStatus } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
@@ -14,7 +14,7 @@ async function main() {
       slug: 'core',
       type: TenantType.CORE,
       tier: SubscriptionTier.ENTERPRISE,
-      status: EntityStatus.ACTIVE,
+      status: TenantStatus.ACTIVE,
       databaseName: 'tenant_core_system',
       primaryColor: '#000000',
       maxUsers: 1000,
@@ -45,7 +45,7 @@ async function main() {
       slug: 'techcorp',
       type: TenantType.BUSINESS,
       tier: SubscriptionTier.PROFESSIONAL,
-      status: EntityStatus.ACTIVE,
+      status: TenantStatus.ACTIVE,
       databaseName: 'tenant_techcorp',
       primaryColor: '#3B82F6',
       maxUsers: 100,
@@ -75,7 +75,7 @@ async function main() {
       slug: 'startuphub',
       type: TenantType.BUSINESS,
       tier: SubscriptionTier.STARTER,
-      status: EntityStatus.ACTIVE,
+      status: TenantStatus.ACTIVE,
       databaseName: 'tenant_startuphub',
       primaryColor: '#10B981',
       maxUsers: 25,
@@ -105,7 +105,7 @@ async function main() {
       slug: 'digitalagency',
       type: TenantType.BUSINESS,
       tier: SubscriptionTier.ENTERPRISE,
-      status: EntityStatus.ACTIVE,
+      status: TenantStatus.ACTIVE,
       databaseName: 'tenant_digitalagency',
       primaryColor: '#8B5CF6',
       maxUsers: 500,
@@ -136,7 +136,7 @@ async function main() {
       slug: 'test-org',
       type: TenantType.TRIAL,
       tier: SubscriptionTier.STARTER,
-      status: EntityStatus.PENDING,
+      status: TenantStatus.SETUP,
       databaseName: 'tenant_testorg',
       primaryColor: '#F59E0B',
       maxUsers: 5,
@@ -167,7 +167,7 @@ async function main() {
       slug: 'legacy-company',
       type: TenantType.BUSINESS,
       tier: SubscriptionTier.PROFESSIONAL,
-      status: EntityStatus.INACTIVE,
+      status: TenantStatus.DEACTIVATED,
       databaseName: 'tenant_legacy',
       primaryColor: '#6B7280',
       maxUsers: 50,
@@ -324,7 +324,7 @@ async function main() {
       email: 'superadmin@system.com',
       name: 'Super Administrator',
       password: 'SuperAdmin123!',
-      status: EntityStatus.ACTIVE,
+      status: TenantStatus.ACTIVE,
       emailVerified: true,
       homeTenantSlug: 'core',
       currentTenantSlug: 'core',
@@ -335,7 +335,7 @@ async function main() {
       email: 'admin@techcorp.com',
       name: 'TechCorp Admin',
       password: 'AdminTechCorp123!',
-      status: EntityStatus.ACTIVE,
+      status: TenantStatus.ACTIVE,
       emailVerified: true,
       homeTenantSlug: 'techcorp',
       currentTenantSlug: 'techcorp',
@@ -345,7 +345,7 @@ async function main() {
       email: 'admin@startuphub.com',
       name: 'StartupHub Admin',
       password: 'AdminStartup123!',
-      status: EntityStatus.ACTIVE,
+      status: TenantStatus.ACTIVE,
       emailVerified: true,
       homeTenantSlug: 'startuphub',
       currentTenantSlug: 'startuphub',
@@ -355,7 +355,7 @@ async function main() {
       email: 'admin@digitalagency.com',
       name: 'Digital Agency Admin',
       password: 'AdminDigital123!',
-      status: EntityStatus.ACTIVE,
+      status: TenantStatus.ACTIVE,
       emailVerified: true,
       homeTenantSlug: 'digitalagency',
       currentTenantSlug: 'digitalagency',
@@ -366,7 +366,7 @@ async function main() {
       email: 'manager@techcorp.com',
       name: 'TechCorp Manager',
       password: 'ManagerTech123!',
-      status: EntityStatus.ACTIVE,
+      status: TenantStatus.ACTIVE,
       emailVerified: true,
       homeTenantSlug: 'techcorp',
       currentTenantSlug: 'techcorp',
@@ -376,7 +376,7 @@ async function main() {
       email: 'manager@startuphub.com',
       name: 'StartupHub Manager',
       password: 'ManagerStartup123!',
-      status: EntityStatus.ACTIVE,
+      status: TenantStatus.ACTIVE,
       emailVerified: true,
       homeTenantSlug: 'startuphub',
       currentTenantSlug: 'startuphub',
@@ -387,7 +387,7 @@ async function main() {
       email: 'john.doe@techcorp.com',
       name: 'John Doe',
       password: 'UserTech123!',
-      status: EntityStatus.ACTIVE,
+      status: TenantStatus.ACTIVE,
       emailVerified: true,
       homeTenantSlug: 'techcorp',
       currentTenantSlug: 'techcorp',
@@ -397,7 +397,7 @@ async function main() {
       email: 'jane.smith@techcorp.com',
       name: 'Jane Smith',
       password: 'UserTech123!',
-      status: EntityStatus.ACTIVE,
+      status: TenantStatus.ACTIVE,
       emailVerified: true,
       homeTenantSlug: 'techcorp',
       currentTenantSlug: 'techcorp',
@@ -407,7 +407,7 @@ async function main() {
       email: 'alice@startuphub.com',
       name: 'Alice Johnson',
       password: 'UserStartup123!',
-      status: EntityStatus.ACTIVE,
+      status: TenantStatus.ACTIVE,
       emailVerified: true,
       homeTenantSlug: 'startuphub',
       currentTenantSlug: 'startuphub',
@@ -417,7 +417,7 @@ async function main() {
       email: 'bob@digitalagency.com',
       name: 'Bob Wilson',
       password: 'UserDigital123!',
-      status: EntityStatus.ACTIVE,
+      status: TenantStatus.ACTIVE,
       emailVerified: true,
       homeTenantSlug: 'digitalagency',
       currentTenantSlug: 'digitalagency',
@@ -625,8 +625,8 @@ async function main() {
 
   console.log('\n🏛️ Tenants Created:');
   for (const tenant of createdTenants) {
-    const statusIcon = tenant.status === EntityStatus.ACTIVE ? '✅' :
-                     tenant.status === EntityStatus.PENDING ? '⏳' : '❌';
+    const statusIcon = tenant.status === TenantStatus.ACTIVE ? '✅' :
+                     tenant.status === TenantStatus.SETUP ? '⏳' : '❌';
     console.log(`   ${statusIcon} ${tenant.name} (${tenant.type} - ${tenant.tier})`);
   }
 }

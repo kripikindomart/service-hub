@@ -39,8 +39,8 @@ export class TenantRestoreController {
       throw new AppError('Tenant not found', 404);
     }
 
-    if (existingTenant.status !== 'DELETED') {
-      throw new AppError(`Cannot restore tenant with status '${existingTenant.status}'. Only deleted tenants can be restored.`, 400);
+    if (existingTenant.status !== 'DEACTIVATED') {
+      throw new AppError(`Cannot restore tenant with status '${existingTenant.status}'. Only deactivated tenants can be restored.`, 400);
     }
 
     // Prevent restoration of CORE tenant

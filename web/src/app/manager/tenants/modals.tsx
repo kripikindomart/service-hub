@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Badge } from '@/components/ui/badge'
 import { BuildingOfficeIcon, TrashIcon, CheckCircleIcon, UsersIcon, CogIcon, ServerIcon, GlobeAltIcon, PencilIcon, EyeIcon } from '@heroicons/react/24/outline'
 import { FormError } from './FormError'
+import { Dispatch, SetStateAction } from 'react'
 
 interface Tenant {
   id: string
@@ -72,9 +73,9 @@ interface TenantModalsProps {
   setShowDuplicateModal: (show: boolean) => void
   currentTenant: Tenant | null
   formData: TenantFormData
-  setFormData: (data: TenantFormData) => void
+  setFormData: Dispatch<SetStateAction<TenantFormData>>
   duplicateData: { name: string; slug: string }
-  setDuplicateData: (data: { name: string; slug: string }) => void
+  setDuplicateData: Dispatch<SetStateAction<{ name: string; slug: string }>>
   actionLoading: boolean
   formErrors: Record<string, string[]>
   handleSubmitAdd: () => void
@@ -149,7 +150,7 @@ export function TenantModals({
                   <Input
                     id="slug"
                     value={formData.slug}
-                    onChange={(e) => setFormData(prev => ({ ...prev, slug: e.target.value }))}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, slug: e.target.value }))}
                     placeholder="tenant-slug"
                   />
                 </div>
@@ -404,7 +405,7 @@ export function TenantModals({
                   <Input
                     id="edit-slug"
                     value={formData.slug}
-                    onChange={(e) => setFormData(prev => ({ ...prev, slug: e.target.value }))}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, slug: e.target.value }))}
                     placeholder="tenant-slug"
                   />
                 </div>

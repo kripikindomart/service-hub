@@ -1,0 +1,770 @@
+import { PrismaClient, TenantStatus, DatabaseType, DatabaseStatus } from '@prisma/client'
+
+const prisma = new PrismaClient()
+
+// ========================================
+// Enhanced Tenant Model
+// ========================================
+
+export interface EnhancedTenantInput {
+  name: string
+  slug: string
+  domain: string
+  description?: string
+  logo?: string
+  settings?: Record<string, any>
+  subscriptionId?: string
+}
+
+export interface EnhancedTenantUpdate {
+  name?: string
+  description?: string
+  logo?: string
+  status?: TenantStatus
+  settings?: Record<string, any>
+  subscriptionId?: string
+}
+
+export interface ServiceConfiguration {
+  assignedServices: Array<{
+    serviceId: string
+    enabled: boolean
+    configuration: Record<string, any>
+    customSettings: Record<string, any>
+    enabledModules: string[]
+  }>
+  customEndpoints: Array<{
+    name: string
+    path: string
+    method: string
+    targetService: string
+    configuration: Record<string, any>
+  }>
+  integrations: Array<{
+    id: string
+    externalService: string
+    type: string
+    configuration: Record<string, any>
+  }>
+  workflows: Array<{
+    id: string
+    name: string
+    status: string
+    configuration: Record<string, any>
+  }>
+}
+
+export interface PermissionConfiguration {
+  globalPermissions: string[]
+  servicePermissions: Record<string, string[]>
+  modulePermissions: Record<string, string[]>
+  customRoles: Array<{
+    name: string
+    description: string
+    permissions: string[]
+    isDefault: boolean
+  }>
+  permissionInheritance: Array<{
+    parent: string
+    child: string
+    conditions: Record<string, any>
+  }>
+}
+
+export interface DatabaseConfiguration {
+  assignedDatabases: Array<{
+    databaseId: string
+    type: DatabaseType
+    connectionConfig: Record<string, any>
+    quota?: {
+      storage: number
+      connections: number
+    }
+  }>
+  sharedTables: string[]
+  isolationRules: Array<{
+    table: string
+    column: string
+    rule: string
+  }>
+  encryptionKeys: Array<{
+    id: string
+    name: string
+    algorithm: string
+    createdAt: Date
+  }>
+}
+
+export interface UIConfiguration {
+  theme: {
+    primaryColor: string
+    secondaryColor: string
+    accentColor: string
+    mode: 'light' | 'dark' | 'auto'
+  }
+  branding: {
+    logo?: string
+    favicon?: string
+    companyName: string
+    customCSS?: string
+  }
+  customMenus: Array<{
+    id: string
+    name: string
+    path: string
+    icon: string
+    order: number
+    parent?: string
+    permissions: string[]
+  }>
+  dashboardLayout: {
+    widgets: Array<{
+      type: string
+      position: { x: number; y: number; w: number; h: number }
+      configuration: Record<string, any>
+    }>
+    layout: string
+  }
+}
+
+export interface SubscriptionConfiguration {
+  plan: {
+    id: string
+    name: string
+    type: 'MONTHLY' | 'YEARLY' | 'CUSTOM'
+    price: number
+    currency: string
+  }
+  limits: {
+    users: number
+    services: number
+    storage: number
+    bandwidth: number
+    apiCalls: number
+  }
+  features: string[]
+  billing: {
+    nextBillingDate: Date
+    paymentMethod: string
+    autoRenew: boolean
+  }
+}
+
+export class EnhancedTenantModel {
+  // Create new tenant with enhanced configuration
+  static async create(data: EnhancedTenantInput) {
+    // Validate slug uniqueness
+    const existingSlug = await prisma.tenant.findUnique({
+      where: { slug: data.slug }
+    })
+
+    if (existingSlug) {
+      throw new Error('Tenant slug already exists')
+    }
+
+    // Validate domain uniqueness
+    const existingDomain = await prisma.tenant.findUnique({
+      where: { domain: data.domain }
+    })
+
+    if (existingDomain) {
+      throw new Error('Tenant domain already exists')
+    }
+
+    return await prisma.tenant.create({
+      data: {
+        ...data,
+        settings: data.settings || {}
+      },
+      include: {
+        userAssignments: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true
+              }
+            }
+          }
+        },
+        services: {
+          include: {
+            service: {
+              select: {
+                id: true,
+                name: true,
+                displayName: true,
+                category: true
+              }
+            }
+          }
+        },
+        databases: {
+          include: {
+            database: {
+              select: {
+                id: true,
+                name: true,
+                type: string,
+                provider: string
+              }
+            }
+          }
+        },
+        _count: {
+          select: {
+            userAssignments: true,
+            services: true,
+            databases: true,
+            workflows: true
+          }
+        }
+      }
+    })
+  }
+
+  // Get tenant by ID with full configuration
+  static async findById(id: string) {
+    const tenant = await prisma.tenant.findUnique({
+      where: { id },
+      include: {
+        userAssignments: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+                status: true
+              }
+            }
+          }
+        },
+        services: {
+          include: {
+            service: {
+              include: {
+                modules: true
+              }
+            }
+          }
+        },
+        tenantRoles: {
+          include: {
+            role: {
+              include: {
+                userRoles: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        email: true,
+                        firstName: true,
+                        lastName: true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        databases: {
+          include: {
+            database: true
+          }
+        },
+        workflows: true,
+        serviceIntegrations: true
+      }
+    })
+
+    if (!tenant) return null
+
+    // Build enhanced configuration
+    const enhancedTenant = {
+      ...tenant,
+      serviceConfig: this.buildServiceConfiguration(tenant),
+      permissionConfig: await this.buildPermissionConfiguration(tenant.id),
+      databaseConfig: this.buildDatabaseConfiguration(tenant),
+      uiConfig: this.buildUIConfiguration(tenant),
+      subscriptionConfig: await this.buildSubscriptionConfiguration(tenant.id)
+    }
+
+    return enhancedTenant
+  }
+
+  // Get tenant by slug
+  static async findBySlug(slug: string) {
+    return await this.findById(
+      (await prisma.tenant.findUnique({ where: { slug } }))?.id || ''
+    )
+  }
+
+  // Get all tenants with filtering
+  static async findAll(filters: {
+    status?: TenantStatus
+    search?: string
+    page?: number
+    limit?: number
+    sortBy?: string
+    sortOrder?: 'asc' | 'desc'
+  } = {}) {
+    const {
+      status,
+      search,
+      page = 1,
+      limit = 20,
+      sortBy = 'createdAt',
+      sortOrder = 'desc'
+    } = filters
+
+    const where: any = {}
+
+    if (status) where.status = status
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } },
+        { slug: { contains: search, mode: 'insensitive' } },
+        { domain: { contains: search, mode: 'insensitive' } }
+      ]
+    }
+
+    const [tenants, total] = await Promise.all([
+      prisma.tenant.findMany({
+        where,
+        include: {
+          userAssignments: {
+            select: {
+              id: true,
+              status: true
+            }
+          },
+          services: {
+            select: {
+              id: true,
+              status: true
+            }
+          },
+          databases: {
+            select: {
+              id: true,
+              type: true,
+              status: true
+            }
+          },
+          _count: {
+            select: {
+              userAssignments: true,
+              services: true,
+              databases: true
+            }
+          }
+        },
+        orderBy: [
+          { [sortBy]: sortOrder },
+          { name: 'asc' }
+        ],
+        skip: (page - 1) * limit,
+        take: limit
+      }),
+      prisma.tenant.count({ where })
+    ])
+
+    return {
+      tenants,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    }
+  }
+
+  // Update tenant
+  static async update(id: string, data: EnhancedTenantUpdate) {
+    // Validate slug uniqueness if provided
+    if (data.slug) {
+      const existingSlug = await prisma.tenant.findFirst({
+        where: {
+          slug: data.slug,
+          id: { not: id }
+        }
+      })
+
+      if (existingSlug) {
+        throw new Error('Tenant slug already exists')
+      }
+    }
+
+    // Validate domain uniqueness if provided
+    if (data.domain) {
+      const existingDomain = await prisma.tenant.findFirst({
+        where: {
+          domain: data.domain,
+          id: { not: id }
+        }
+      })
+
+      if (existingDomain) {
+        throw new Error('Tenant domain already exists')
+      }
+    }
+
+    return await prisma.tenant.update({
+      where: { id },
+      data: {
+        ...data,
+        updatedAt: new Date()
+      },
+      include: {
+        userAssignments: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true
+              }
+            }
+          }
+        },
+        services: {
+          include: {
+            service: {
+              select: {
+                id: true,
+                name: true,
+                displayName: true
+              }
+            }
+          }
+        }
+      }
+    })
+  }
+
+  // Delete tenant
+  static async delete(id: string) {
+    // Check if tenant has active users
+    const userCount = await prisma.userAssignment.count({
+      where: {
+        tenantId: id,
+        status: 'ACTIVE'
+      }
+    })
+
+    if (userCount > 0) {
+      throw new Error('Cannot delete tenant with active users')
+    }
+
+    return await prisma.tenant.delete({
+      where: { id }
+    })
+  }
+
+  // Build service configuration
+  private static buildServiceConfiguration(tenant: any): ServiceConfiguration {
+    return {
+      assignedServices: tenant.services.map((service: any) => ({
+        serviceId: service.serviceId,
+        enabled: service.status === 'ACTIVE',
+        configuration: service.configuration,
+        customSettings: service.customSettings,
+        enabledModules: service.enabledModules
+      })),
+      customEndpoints: [], // Would be populated from custom endpoints table
+      integrations: tenant.serviceIntegrations.map((integration: any) => ({
+        id: integration.id,
+        externalService: integration.externalService,
+        type: integration.integrationType,
+        configuration: integration.configuration
+      })),
+      workflows: tenant.workflows.map((workflow: any) => ({
+        id: workflow.id,
+        name: workflow.name,
+        status: workflow.status,
+        configuration: workflow.triggers
+      }))
+    }
+  }
+
+  // Build permission configuration
+  private static async buildPermissionConfiguration(tenantId: string): Promise<PermissionConfiguration> {
+    const tenantRoles = await prisma.tenantRole.findMany({
+      where: { tenantId },
+      include: {
+        role: {
+          include: {
+            userRoles: {
+              where: { tenantId },
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    email: true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    })
+
+    return {
+      globalPermissions: [], // Would be populated from user assignments
+      servicePermissions: {}, // Would be populated from role permissions
+      modulePermissions: {}, // Would be populated from module permissions
+      customRoles: tenantRoles.map((tr: any) => ({
+        name: tr.customizedName || tr.role.name,
+        description: tr.role.description,
+        permissions: tr.customizedPermissions || tr.role.permissions,
+        isDefault: tr.role.name === 'Standard User'
+      })),
+      permissionInheritance: [] // Would be populated from inheritance rules
+    }
+  }
+
+  // Build database configuration
+  private static buildDatabaseConfiguration(tenant: any): DatabaseConfiguration {
+    return {
+      assignedDatabases: tenant.databases.map((db: any) => ({
+        databaseId: db.databaseId,
+        type: db.type,
+        connectionConfig: {
+          host: db.host,
+          port: db.port,
+          database: db.database,
+          username: db.username,
+          sslMode: db.sslMode
+        },
+        quota: {
+          storage: db.storage ? Number(db.storage) : undefined,
+          connections: db.connectionQuota
+        }
+      })),
+      sharedTables: [], // Would be populated from shared tables config
+      isolationRules: [], // Would be populated from isolation rules
+      encryptionKeys: [] // Would be populated from encryption keys
+    }
+  }
+
+  // Build UI configuration
+  private static buildUIConfiguration(tenant: any): UIConfiguration {
+    const settings = tenant.settings || {}
+
+    return {
+      theme: {
+        primaryColor: settings.theme?.primaryColor || '#3B82F6',
+        secondaryColor: settings.theme?.secondaryColor || '#6B7280',
+        accentColor: settings.theme?.accentColor || '#10B981',
+        mode: settings.theme?.mode || 'light'
+      },
+      branding: {
+        logo: tenant.logo,
+        favicon: settings.branding?.favicon,
+        companyName: tenant.name,
+        customCSS: settings.branding?.customCSS
+      },
+      customMenus: settings.menus || [],
+      dashboardLayout: settings.dashboard || {
+        widgets: [],
+        layout: 'default'
+      }
+    }
+  }
+
+  // Build subscription configuration
+  private static async buildSubscriptionConfiguration(tenantId: string): Promise<SubscriptionConfiguration> {
+    const subscription = await prisma.subscription.findUnique({
+      where: { tenantId },
+      include: {
+        plan: true
+      }
+    })
+
+    if (!subscription) {
+      return {
+        plan: {
+          id: 'free',
+          name: 'Free Plan',
+          type: 'CUSTOM',
+          price: 0,
+          currency: 'USD'
+        },
+        limits: {
+          users: 5,
+          services: 3,
+          storage: 1073741824, // 1GB
+          bandwidth: 10737418240, // 10GB
+          apiCalls: 10000
+        },
+        features: ['Basic Features'],
+        billing: {
+          nextBillingDate: new Date(),
+          paymentMethod: 'none',
+          autoRenew: false
+        }
+      }
+    }
+
+    return {
+      plan: {
+        id: subscription.planId,
+        name: subscription.plan?.name || 'Unknown Plan',
+        type: subscription.plan?.type as any || 'CUSTOM',
+        price: Number(subscription.amount),
+        currency: subscription.currency
+      },
+      limits: {
+        users: subscription.plan?.userLimit || 10,
+        services: subscription.plan?.serviceLimit || 5,
+        storage: Number(subscription.plan?.storageLimit) || 1073741824,
+        bandwidth: Number(subscription.plan?.bandwidthLimit) || 10737418240,
+        apiCalls: subscription.plan?.apiCallLimit || 10000
+      },
+      features: subscription.plan?.features || [],
+      billing: {
+        nextBillingDate: subscription.nextBillingDate,
+        paymentMethod: subscription.paymentMethodId || 'none',
+        autoRenew: true
+      }
+    }
+  }
+
+  // Get tenant statistics
+  static async getStatistics(tenantId: string) {
+    const [
+      userStats,
+      serviceStats,
+      databaseStats,
+      workflowStats,
+      integrationStats
+    ] = await Promise.all([
+      prisma.userAssignment.groupBy({
+        by: ['status'],
+        _count: true,
+        where: { tenantId }
+      }),
+      prisma.tenantService.groupBy({
+        by: ['status'],
+        _count: true,
+        where: { tenantId }
+      }),
+      prisma.tenantDatabase.groupBy({
+        by: ['status'],
+        _count: true,
+        where: { tenantId }
+      }),
+      prisma.workflowDefinition.groupBy({
+        by: ['status'],
+        _count: true,
+        where: { tenantId }
+      }),
+      prisma.serviceIntegration.groupBy({
+        by: ['status'],
+        _count: true,
+        where: { tenantId }
+      })
+    ])
+
+    return {
+      users: {
+        total: userStats.reduce((sum, stat) => sum + stat._count, 0),
+        active: userStats.find(s => s.status === 'ACTIVE')?._count || 0,
+        inactive: userStats.find(s => s.status === 'INACTIVE')?._count || 0
+      },
+      services: {
+        total: serviceStats.reduce((sum, stat) => sum + stat._count, 0),
+        active: serviceStats.find(s => s.status === 'ACTIVE')?._count || 0,
+        inactive: serviceStats.find(s => s.status === 'INACTIVE')?._count || 0
+      },
+      databases: {
+        total: databaseStats.reduce((sum, stat) => sum + stat._count, 0),
+        active: databaseStats.find(s => s.status === 'ACTIVE')?._count || 0,
+        maintenance: databaseStats.find(s => s.status === 'MAINTENANCE')?._count || 0
+      },
+      workflows: {
+        total: workflowStats.reduce((sum, stat) => sum + stat._count, 0),
+        active: workflowStats.find(s => s.status === 'ACTIVE')?._count || 0,
+        draft: workflowStats.find(s => s.status === 'DRAFT')?._count || 0
+      },
+      integrations: {
+        total: integrationStats.reduce((sum, stat) => sum + stat._count, 0),
+        active: integrationStats.find(s => s.status === 'ACTIVE')?._count || 0,
+        error: integrationStats.find(s => s.status === 'ERROR')?._count || 0
+      }
+    }
+  }
+
+  // Update tenant configuration
+  static async updateConfiguration(tenantId: string, config: {
+    serviceConfig?: Partial<ServiceConfiguration>
+    permissionConfig?: Partial<PermissionConfiguration>
+    databaseConfig?: Partial<DatabaseConfiguration>
+    uiConfig?: Partial<UIConfiguration>
+  }) {
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId }
+    })
+
+    if (!tenant) {
+      throw new Error('Tenant not found')
+    }
+
+    const currentSettings = tenant.settings || {}
+    const updatedSettings = {
+      ...currentSettings,
+      ...(config.uiConfig || {})
+    }
+
+    return await prisma.tenant.update({
+      where: { id: tenantId },
+      data: {
+        settings: updatedSettings,
+        updatedAt: new Date()
+      }
+    })
+  }
+
+  // Check tenant limits
+  static async checkLimits(tenantId: string) {
+    const tenant = await this.findById(tenantId)
+    if (!tenant) {
+      throw new Error('Tenant not found')
+    }
+
+    const stats = await this.getStatistics(tenantId)
+    const limits = tenant.subscriptionConfig.limits
+
+    const checks = {
+      users: {
+        used: stats.users.total,
+        limit: limits.users,
+        exceeded: stats.users.total > limits.users,
+        percentage: (stats.users.total / limits.users) * 100
+      },
+      services: {
+        used: stats.services.total,
+        limit: limits.services,
+        exceeded: stats.services.total > limits.services,
+        percentage: (stats.services.total / limits.services) * 100
+      },
+      // Add more limit checks as needed
+    }
+
+    return {
+      checks,
+      overallExceeded: Object.values(checks).some(check => check.exceeded)
+    }
+  }
+}
+
+export default EnhancedTenantModel

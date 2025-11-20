@@ -1,7 +1,8 @@
 import axios from 'axios'
 import { ApiResponse, PaginatedResponse, AuthResponse, LoginRequest, RegisterRequest, User, Permission, Tenant } from '@/types'
+import { tenantIsolation } from './tenant-isolation'
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3002'
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3002/api/v1'
 
 // Token management utilities
 const getTokenExpiration = (token: string): number | null => {
@@ -80,7 +81,7 @@ const refreshTokenIfNeeded = async (): Promise<string | null> => {
   refreshInProgress = true
   refreshPromise = new Promise<string>(async (resolve, reject) => {
     try {
-      const response = await axios.post(`${API_BASE_URL}/api/v1/auth/refresh`, {
+      const response = await axios.post(`${API_BASE_URL}/auth/refresh`, {
         refreshToken,
       })
 
@@ -115,11 +116,14 @@ const api = axios.create({
 // Request interceptor to add auth token and check expiration
 api.interceptors.request.use(async (config) => {
   // Skip token check for auth endpoints
-  const isAuthEndpoint = config.url?.includes('/api/v1/auth/login') ||
-                        config.url?.includes('/api/v1/auth/register') ||
-                        config.url?.includes('/api/v1/auth/refresh')
+  const isAuthEndpoint = config.url?.includes('/auth/login') ||
+                        config.url?.includes('/auth/register') ||
+                        config.url?.includes('/auth/refresh')
 
-  if (!isAuthEndpoint) {
+  // Skip token check for public menu endpoints
+  const isPublicMenuEndpoint = config.url?.includes('/menus/public/')
+
+  if (!isAuthEndpoint && !isPublicMenuEndpoint) {
     const token = await refreshTokenIfNeeded()
 
     if (token) {
@@ -132,6 +136,13 @@ api.interceptors.request.use(async (config) => {
         isAuthenticationError: true
       })
     }
+  }
+
+  // Add tenant ID to request headers for tenant isolation
+  const currentTenantId = tenantIsolation.getCurrentTenantId()
+  if (currentTenantId) {
+    config.headers['X-Tenant-ID'] = currentTenantId
+    console.log(`API Request: Adding tenant ID ${currentTenantId} to ${config.url}`)
   }
 
   // Add request timestamp for monitoring
@@ -240,40 +251,40 @@ export const authApi = {
   login: async (data: LoginRequest): Promise<ApiResponse<any>> => {
     console.log('authApi.login called with:', data)
     console.log('API base URL:', process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000')
-    const response = await api.post('/api/v1/auth/login', data)
+    const response = await api.post('/auth/login', data)
     console.log('API response:', response.data)
     return response.data
   },
 
   register: async (data: RegisterRequest): Promise<ApiResponse<AuthResponse>> => {
-    const response = await api.post('/api/v1/auth/register', data)
+    const response = await api.post('/auth/register', data)
     return response.data
   },
 
   logout: async (refreshToken: string): Promise<ApiResponse<void>> => {
-    const response = await api.post('/api/v1/auth/logout', { refreshToken })
+    const response = await api.post('/auth/logout', { refreshToken })
     return response.data
   },
 
   refreshToken: async (refreshToken: string): Promise<ApiResponse<{ accessToken: string }>> => {
-    const response = await api.post('/api/v1/auth/refresh', { refreshToken })
+    const response = await api.post('/auth/refresh', { refreshToken })
     return response.data
   },
 }
 
 export const userApi = {
   getProfile: async (): Promise<ApiResponse<User>> => {
-    const response = await api.get('/api/v1/users/profile')
+    const response = await api.get('/users/profile')
     return response.data
   },
 
   updateProfile: async (data: Partial<User>): Promise<ApiResponse<User>> => {
-    const response = await api.put('/api/v1/users/profile', data)
+    const response = await api.put('/users/profile', data)
     return response.data
   },
 
   changePassword: async (data: { currentPassword: string; newPassword: string }): Promise<ApiResponse<void>> => {
-    const response = await api.put('/api/v1/users/password', data)
+    const response = await api.put('/users/password', data)
     return response.data
   },
 
@@ -286,22 +297,22 @@ export const userApi = {
     sortBy?: string
     sortOrder?: 'asc' | 'desc'
   }): Promise<PaginatedResponse<User>> => {
-    const response = await api.get('/api/v1/admin/users', { params })
+    const response = await api.get('/admin/users', { params })
     return response.data
   },
 
   activateUser: async (userId: string): Promise<ApiResponse<User>> => {
-    const response = await api.post(`/api/v1/admin/users/${userId}/activate`)
+    const response = await api.post(`/admin/users/${userId}/activate`)
     return response.data
   },
 
   deactivateUser: async (userId: string): Promise<ApiResponse<User>> => {
-    const response = await api.post(`/api/v1/admin/users/${userId}/deactivate`)
+    const response = await api.post(`/admin/users/${userId}/deactivate`)
     return response.data
   },
 
   getUserById: async (userId: string): Promise<ApiResponse<User>> => {
-    const response = await api.get(`/api/v1/admin/users/${userId}`)
+    const response = await api.get(`/admin/users/${userId}`)
     return response.data
   },
 }
@@ -314,12 +325,12 @@ export const tenantApi = {
     type?: string
     status?: string
   }): Promise<PaginatedResponse<Tenant>> => {
-    const response = await api.get('/api/v1/tenants', { params })
+    const response = await api.get('/tenants', { params })
     return response.data
   },
 
   getTenantById: async (tenantId: string): Promise<ApiResponse<Tenant>> => {
-    const response = await api.get(`/api/v1/tenants/${tenantId}`)
+    const response = await api.get(`/tenants/${tenantId}`)
     return response.data
   },
 
@@ -333,17 +344,17 @@ export const tenantApi = {
     primaryColor?: string
     logoUrl?: string
   }): Promise<ApiResponse<Tenant>> => {
-    const response = await api.post('/api/v1/tenants', data)
+    const response = await api.post('/tenants', data)
     return response.data
   },
 
   updateTenant: async (tenantId: string, data: Partial<Tenant>): Promise<ApiResponse<Tenant>> => {
-    const response = await api.put(`/api/v1/tenants/${tenantId}`, data)
+    const response = await api.put(`/tenants/${tenantId}`, data)
     return response.data
   },
 
   deleteTenant: async (tenantId: string): Promise<ApiResponse<void>> => {
-    const response = await api.delete(`/api/v1/tenants/${tenantId}`)
+    const response = await api.delete(`/tenants/${tenantId}`)
     return response.data
   },
 
@@ -354,7 +365,7 @@ export const tenantApi = {
     status?: string
     role?: string
   }): Promise<PaginatedResponse<User>> => {
-    const response = await api.get(`/api/v1/tenants/${tenantId}/users`, { params })
+    const response = await api.get(`/tenants/${tenantId}/users`, { params })
     return response.data
   },
 
@@ -363,16 +374,16 @@ export const tenantApi = {
     roleId: string
     message?: string
   }): Promise<ApiResponse<void>> => {
-    const response = await api.post(`/api/v1/tenants/${tenantId}/invite`, data)
+    const response = await api.post(`/tenants/${tenantId}/invite`, data)
     return response.data
   },
 
   getTenantRoles: async (tenantId: string): Promise<ApiResponse<any[]>> => {
-    const response = await api.get(`/api/v1/tenants/${tenantId}/roles`)
+    const response = await api.get(`/tenants/${tenantId}/roles`)
     return response.data
   },
   getDashboardStats: async (): Promise<ApiResponse<any>> => {
-    const response = await api.get('/api/v1/tenants/dashboard/stats')
+    const response = await api.get('/tenants/dashboard/stats')
     return response.data
   },
 
@@ -394,17 +405,17 @@ export const tenantApi = {
       status: string
     }
   }>> => {
-    const response = await api.post(`/api/v1/tenants/${tenantId}/duplicate`, data)
+    const response = await api.post(`/tenants/${tenantId}/duplicate`, data)
     return response.data
   },
 
   archiveTenant: async (tenantId: string): Promise<ApiResponse<Tenant>> => {
-    const response = await api.post(`/api/v1/tenants/${tenantId}/archive`)
+    const response = await api.post(`/tenants/${tenantId}/archive`)
     return response.data
   },
 
   unarchiveTenant: async (tenantId: string): Promise<ApiResponse<Tenant>> => {
-    const response = await api.post(`/api/v1/tenants/${tenantId}/unarchive`)
+    const response = await api.post(`/tenants/${tenantId}/unarchive`)
     return response.data
   },
 
@@ -415,7 +426,7 @@ export const tenantApi = {
     sortBy?: string
     sortOrder?: 'asc' | 'desc'
   }): Promise<PaginatedResponse<Tenant>> => {
-    const response = await api.get('/api/v1/tenants/archived', { params })
+    const response = await api.get('/tenants/archived', { params })
     return response.data
   },
 
@@ -428,27 +439,27 @@ export const tenantApi = {
     sortBy?: string
     sortOrder?: 'asc' | 'desc'
   }): Promise<PaginatedResponse<Tenant>> => {
-    const response = await api.get('/api/v1/tenants/trash', { params })
+    const response = await api.get('/tenants/trash', { params })
     return response.data
   },
 
   permanentDeleteTenant: async (tenantId: string): Promise<ApiResponse<void>> => {
-    const response = await api.delete(`/api/v1/tenants/${tenantId}/permanent`)
+    const response = await api.delete(`/tenants/${tenantId}/permanent`)
     return response.data
   },
 
   restoreTenant: async (tenantId: string): Promise<ApiResponse<Tenant>> => {
-    const response = await api.post(`/api/v1/tenants/${tenantId}/restore`)
+    const response = await api.post(`/tenants/${tenantId}/restore`)
     return response.data
   },
 
   bulkRestoreTenants: async (tenantIds: string[]): Promise<ApiResponse<void>> => {
-    const response = await api.post('/api/v1/tenants/bulk-restore', { tenantIds })
+    const response = await api.post('/tenants/bulk-restore', { tenantIds })
     return response.data
   },
 
   bulkPermanentDeleteTenants: async (tenantIds: string[]): Promise<ApiResponse<void>> => {
-    const response = await api.post('/api/v1/tenants/bulk-permanent-delete', { tenantIds })
+    const response = await api.post('/tenants/bulk-permanent-delete', { tenantIds })
     return response.data
   },
 }
@@ -461,7 +472,7 @@ export const permissionApi = {
     action?: string
     scope?: string
   }): Promise<PaginatedResponse<Permission>> => {
-    const response = await api.get('/api/v1/admin/permissions', { params })
+    const response = await api.get('/admin/permissions', { params })
     return response.data
   },
 
@@ -473,17 +484,105 @@ export const permissionApi = {
     description?: string
     category?: string
   }): Promise<ApiResponse<Permission>> => {
-    const response = await api.post('/api/v1/admin/permissions', data)
+    const response = await api.post('/admin/permissions', data)
     return response.data
   },
 
   updatePermission: async (permissionId: string, data: Partial<Permission>): Promise<ApiResponse<Permission>> => {
-    const response = await api.put(`/api/v1/admin/permissions/${permissionId}`, data)
+    const response = await api.put(`/admin/permissions/${permissionId}`, data)
     return response.data
   },
 
   deletePermission: async (permissionId: string): Promise<ApiResponse<void>> => {
-    const response = await api.delete(`/api/v1/admin/permissions/${permissionId}`)
+    const response = await api.delete(`/admin/permissions/${permissionId}`)
+    return response.data
+  },
+}
+
+export const menuApi = {
+  getMenus: async (params?: {
+    parentId?: string | null
+    isActive?: boolean
+    category?: string
+    search?: string
+    sortBy?: string
+    sortOrder?: 'asc' | 'desc'
+    page?: number
+    limit?: number
+  }): Promise<any> => {
+    const response = await api.get('/admin/menus', { params })
+    return response.data
+  },
+
+  getMenuById: async (id: string): Promise<any> => {
+    const response = await api.get(`/admin/menus/${id}`)
+    return response.data
+  },
+
+  createMenu: async (data: {
+    name: string
+    label: string
+    icon?: string
+    path?: string
+    component?: string
+    parentId?: string | null
+    category?: string
+    isActive?: boolean
+    isPublic?: boolean
+    order?: number
+    description?: string
+  }): Promise<any> => {
+    const response = await api.post('/admin/menus', data)
+    return response.data
+  },
+
+  updateMenu: async (id: string, data: any): Promise<any> => {
+    const response = await api.put(`/admin/menus/${id}`, data)
+    return response.data
+  },
+
+  deleteMenu: async (id: string, force?: boolean): Promise<any> => {
+    const response = await api.delete(`/admin/menus/${id}`, {
+      params: { force: force ? 'true' : 'false' }
+    })
+    return response.data
+  },
+
+  getMenuTree: async (tenantId?: string): Promise<any> => {
+    const response = await api.get('/admin/menus/tree', {
+      params: tenantId ? { tenantId } : undefined
+    })
+    return response.data
+  },
+
+  getUserMenus: async (userId: string, params?: {
+    tenantId?: string
+    parentId?: string | null
+  }): Promise<any> => {
+    const response = await api.get(`/admin/menus/user/${userId}`, { params })
+    return response.data
+  },
+
+  reorderMenus: async (menuOrders: {
+    id: string
+    order: number
+    parentId?: string | null
+  }[]): Promise<any> => {
+    const response = await api.post('/admin/menus/reorder', { menuOrders })
+    return response.data
+  },
+
+  duplicateMenu: async (id: string, data?: {
+    name?: string
+    label?: string
+    tenantId?: string
+  }): Promise<any> => {
+    const response = await api.post(`/admin/menus/${id}/duplicate`, data)
+    return response.data
+  },
+
+  getMenuCategories: async (): Promise<any> => {
+    const response = await api.get('/admin/menus/categories')
     return response.data
   },
 }
@@ -500,48 +599,48 @@ export const adminApi = {
     sortBy?: string
     sortOrder?: 'asc' | 'desc'
   }): Promise<PaginatedResponse<User>> => {
-    const response = await api.get('/api/v1/admin/users', { params })
+    const response = await api.get('/admin/users', { params })
     return response.data
   },
 
   getUserById: async (userId: string): Promise<ApiResponse<User>> => {
-    const response = await api.get(`/api/v1/admin/users/${userId}`)
+    const response = await api.get(`/admin/users/${userId}`)
     return response.data
   },
 
   activateUser: async (userId: string): Promise<ApiResponse<User>> => {
-    const response = await api.post(`/api/v1/admin/users/${userId}/activate`)
+    const response = await api.post(`/admin/users/${userId}/activate`)
     return response.data
   },
 
   deactivateUser: async (userId: string): Promise<ApiResponse<User>> => {
-    const response = await api.post(`/api/v1/admin/users/${userId}/deactivate`)
+    const response = await api.post(`/admin/users/${userId}/deactivate`)
     return response.data
   },
 
   updateUser: async (userId: string, data: Partial<User>): Promise<ApiResponse<User>> => {
-    const response = await api.put(`/api/v1/admin/users/${userId}`, data)
+    const response = await api.put(`/admin/users/${userId}`, data)
     return response.data
   },
 
   deleteUser: async (userId: string, reason?: string): Promise<ApiResponse<void>> => {
-    const response = await api.delete(`/api/v1/admin/users/${userId}`, { data: { reason } })
+    const response = await api.delete(`/admin/users/${userId}`, { data: { reason } })
     return response.data
   },
   restoreUser: async (userId: string): Promise<ApiResponse<void>> => {
-    const response = await api.post(`/api/v1/admin/users/${userId}/restore`)
+    const response = await api.post(`/admin/users/${userId}/restore`)
     return response.data
   },
   archiveUser: async (userId: string): Promise<ApiResponse<void>> => {
-    const response = await api.post(`/api/v1/admin/users/${userId}/archive`)
+    const response = await api.post(`/admin/users/${userId}/archive`)
     return response.data
   },
   unarchiveUser: async (userId: string): Promise<ApiResponse<void>> => {
-    const response = await api.post(`/api/v1/admin/users/${userId}/unarchive`)
+    const response = await api.post(`/admin/users/${userId}/unarchive`)
     return response.data
   },
   permanentDeleteUser: async (userId: string): Promise<ApiResponse<void>> => {
-    const response = await api.delete(`/api/v1/admin/users/${userId}/permanent`)
+    const response = await api.delete(`/admin/users/${userId}/permanent`)
     return response.data
   },
   getDeletedUsers: async (params?: {
@@ -553,7 +652,7 @@ export const adminApi = {
     sortBy?: string
     sortOrder?: 'asc' | 'desc'
   }): Promise<ApiResponse<any[]>> => {
-    const response = await api.get('/api/v1/admin/users/deleted', { params })
+    const response = await api.get('/admin/users/deleted', { params })
     return response.data
   },
   getArchivedUsers: async (params?: {
@@ -565,12 +664,12 @@ export const adminApi = {
     sortBy?: string
     sortOrder?: 'asc' | 'desc'
   }): Promise<ApiResponse<any[]>> => {
-    const response = await api.get('/api/v1/admin/users/archived', { params })
+    const response = await api.get('/admin/users/archived', { params })
     return response.data
   },
 
   bulkActionUsers: async (action: string, userIds: string[]): Promise<ApiResponse<any>> => {
-    const response = await api.post('/api/v1/admin/users/bulk-action', { action, userIds })
+    const response = await api.post('/admin/users/bulk-action', { action, userIds })
     return response.data
   },
 
@@ -582,7 +681,7 @@ export const adminApi = {
     dateTo?: string
     format?: 'json' | 'csv'
   }): Promise<any> => {
-    const response = await api.get('/api/v1/admin/users/export', { params })
+    const response = await api.get('/admin/users/export', { params })
     return response.data
   },
 
@@ -597,7 +696,7 @@ export const adminApi = {
     roleId: string
     sendEmailInvite?: boolean
   }): Promise<ApiResponse<User>> => {
-    const response = await api.post('/api/v1/admin/users', data)
+    const response = await api.post('/admin/users', data)
     return response.data
   },
 }

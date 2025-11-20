@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import DashboardLayout from '@/components/layout/DashboardLayout'
+import RouteGuard from '@/components/guards/RouteGuard'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -108,7 +109,7 @@ export default function TenantsPage() {
     domain: '',
     type: 'BUSINESS',
     tier: 'STARTER',
-    status: 'PENDING',
+    status: 'PENDING' as const,
     maxUsers: 10,
     maxServices: 5,
     storageLimitMb: 1024,
@@ -190,7 +191,7 @@ export default function TenantsPage() {
       domain: '',
       type: 'BUSINESS',
       tier: 'STARTER',
-      status: 'PENDING',
+      status: 'PENDING' as const,
       maxUsers: 10,
       maxServices: 5,
       storageLimitMb: 1024,
@@ -569,7 +570,7 @@ export default function TenantsPage() {
         slug: duplicateData.slug,
         type: currentTenant.type,
         tier: currentTenant.tier,
-        status: 'PENDING',
+        status: 'PENDING' as const,
         primaryColor: currentTenant.primaryColor,
         logoUrl: currentTenant.logoUrl,
         maxUsers: currentTenant.maxUsers,
@@ -707,7 +708,8 @@ export default function TenantsPage() {
   }
 
   return (
-    <DashboardLayout>
+    <RouteGuard requiredPermission="manage_tenants" fallbackPath="/dashboard">
+      <DashboardLayout>
       <div className="space-y-4 sm:space-y-6">
         {/* Header */}
         <div className="p-4 sm:p-6 border shadow-lg bg-white/80 backdrop-blur-sm rounded-2xl border-white/20">
@@ -1535,6 +1537,7 @@ export default function TenantsPage() {
           getTypeIcon={getTypeIcon}
         />
       </div>
-    </DashboardLayout>
+      </DashboardLayout>
+    </RouteGuard>
   )
 }

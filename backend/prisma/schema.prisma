@@ -31,13 +31,13 @@ model User {
   updatedBy           String?          @map("updated_by")
   homeTenantId        String?          @map("home_tenant_id")
   currentTenantId     String?          @map("current_tenant_id")
-  archivedAt          DateTime?        @map("archived_at")
-  bio                 String?
   deletedAt           DateTime?        @map("deleted_at")
   deletedBy           String?          @map("deleted_by")
   deletionReason      String?          @map("deletion_reason")
-  department          String?
-  employeeId          String?          @map("employee_id")
+  passwordResetToken      String?   @map("password_reset_token")
+  passwordResetExpires    DateTime? @map("password_reset_expires")
+  emailVerificationToken  String?   @map("email_verification_token")
+  emailVerifiedAt         DateTime? @map("email_verified_at")
   lastActiveAt        DateTime?        @map("last_active_at")
   loginCount          Int              @default(0) @map("login_count")
   mfaEnabled          Boolean          @default(false) @map("mfa_enabled")
@@ -59,8 +59,11 @@ model User {
   @@index([createdAt])
   @@index([lastLoginAt])
   @@index([deletedAt])
-  @@index([archivedAt])
   @@index([mfaEnabled])
+  @@index([passwordResetToken])
+  @@index([emailVerificationToken])
+  @@index([passwordResetExpires])
+  @@index([emailVerifiedAt])
   @@index([currentTenantId], map: "users_current_tenant_id_fkey")
   @@index([homeTenantId], map: "users_home_tenant_id_fkey")
   @@map("users")
@@ -73,7 +76,7 @@ model Tenant {
   domain          String?          @unique
   type            TenantType       @default(BUSINESS)
   tier            SubscriptionTier @default(STARTER)
-  status          EntityStatus     @default(PENDING)
+  status          TenantStatus     @default(SETUP)
   maxUsers        Int              @default(10)
   maxServices     Int              @default(5)
   storageLimitMb  Int              @default(1024) @map("storage_limit_mb")
@@ -87,6 +90,9 @@ model Tenant {
   settings        Json?
   featureFlags    Json?            @map("feature_flags")
   integrations    Json?
+  trialUntil      DateTime?        @map("trial_until")
+  suspendedUntil  DateTime?        @map("suspended_until")
+  deactivatedAt   DateTime?        @map("deactivated_at")
   createdAt       DateTime         @default(now()) @map("created_at")
   updatedAt       DateTime         @updatedAt @map("updated_at")
   createdBy       String?          @map("created_by")
@@ -95,14 +101,17 @@ model Tenant {
   roles           Role[]
   creator         User?            @relation("TenantCreator", fields: [createdBy], references: [id])
   userAssignments UserAssignment[]
-    currentUsers    User[]           @relation("CurrentTenant")
+  currentUsers    User[]           @relation("CurrentTenant")
   homeUsers       User[]           @relation("HomeTenant")
+  menus           Menu[]
 
   @@unique([name, type])
   @@index([slug])
   @@index([type])
   @@index([status])
   @@index([tier])
+  @@index([trialUntil])
+  @@index([suspendedUntil])
   @@index([createdBy], map: "tenants_created_by_fkey")
   @@map("tenants")
 }
@@ -121,15 +130,15 @@ model Role {
   parentRoleId    String?          @map("parent_role_id")
   createdAt       DateTime         @default(now()) @map("created_at")
   updatedAt       DateTime         @updatedAt @map("updated_at")
-  archivedAt      DateTime?        @map("archived_at")
-  constraints     Json?
   createdBy       String?          @map("created_by")
   deletedAt       DateTime?        @map("deleted_at")
   isActive        Boolean          @default(true) @map("is_active")
+  priority        Int              @default(0)
+  color           String           @default("#3B82F6")
+  icon            String?
   metadata        Json?
   organizationId  String?          @map("organization_id")
   updatedBy       String?          @map("updated_by")
-  weight          Int?             @default(0)
   rolePermissions RolePermission[]
   organization    Organization?    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   parentRole      Role?            @relation("RoleHierarchy", fields: [parentRoleId], references: [id])
@@ -162,7 +171,6 @@ model Organization {
   updatedAt       DateTime         @updatedAt @map("updated_at")
   createdBy       String?          @map("created_by")
   updatedBy       String?          @map("updated_by")
-  archivedAt      DateTime?        @map("archived_at")
   deletedAt       DateTime?        @map("deleted_at")
   parent          Organization?    @relation("OrgHierarchy", fields: [parentId], references: [id])
   children        Organization[]   @relation("OrgHierarchy")
@@ -206,7 +214,6 @@ model UserAssignment {
   notes             String?
   createdAt         DateTime         @default(now()) @map("created_at")
   updatedAt         DateTime         @updatedAt @map("updated_at")
-  archivedAt        DateTime?        @map("archived_at")
   deletedAt         DateTime?        @map("deleted_at")
   organization      Organization?    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   role              Role             @relation(fields: [roleId], references: [id], onDelete: Cascade)
@@ -261,6 +268,7 @@ model Permission {
   createdAt          DateTime         @default(now()) @map("created_at")
   updatedAt          DateTime         @updatedAt @map("updated_at")
   rolePermissions    RolePermission[]
+  menuPermissions    MenuPermission[]
 
   @@unique([resource, action, scope])
   @@index([resource])
@@ -344,6 +352,65 @@ model BulkActionResult {
   @@map("bulk_action_results")
 }
 
+model Menu {
+  id          String          @id @default(uuid())
+  name        String
+  label       String
+  icon        String?         // Icon name or emoji
+  path        String?         // URL path for frontend routing
+  component   String?         // React component path
+  url         String?         // External URL
+  target      String?         // _blank, _self, etc.
+  parentId    String?         @map("parent_id")
+  tenantId    String?         @map("tenant_id")
+  category    String?
+  location    MenuLocation    @default(HEADER) // HEADER, SIDEBAR, FOOTER, CUSTOM
+  isActive    Boolean         @default(true) @map("is_active")
+  isPublic    Boolean         @default(false) @map("is_public")
+  order       Int             @default(0)
+  description String?
+  cssClass    String?         @map("css_class")
+  cssStyle    String?         @map("css_style")
+  attributes  Json?           // Custom HTML attributes
+  metadata    Json?
+  createdAt   DateTime        @default(now()) @map("created_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
+  createdBy   String?         @map("created_by")
+  updatedBy   String?         @map("updated_by")
+  deletedAt   DateTime?       @map("deleted_at")
+  parent      Menu?           @relation("MenuHierarchy", fields: [parentId], references: [id])
+  children    Menu[]          @relation("MenuHierarchy")
+  permissions MenuPermission[]
+  tenant      Tenant?         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([name, tenantId, deletedAt])
+  @@index([parentId])
+  @@index([tenantId])
+  @@index([category])
+  @@index([location])
+  @@index([isActive])
+  @@index([isPublic])
+  @@index([order])
+  @@index([deletedAt])
+  @@index([parentId], map: "menus_parent_id_fkey")
+  @@map("menus")
+}
+
+model MenuPermission {
+  id           String    @id @default(uuid())
+  menuId       String    @map("menu_id")
+  permissionId String    @map("permission_id")
+  grantedBy    String?   @map("granted_by")
+  grantedAt    DateTime  @default(now()) @map("granted_at")
+  menu         Menu      @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([menuId, permissionId])
+  @@index([menuId])
+  @@index([permissionId])
+  @@map("menu_permissions")
+}
+
 enum EntityStatus {
   DRAFT
   ACTIVE
@@ -359,6 +426,13 @@ enum TenantType {
   CORE
   BUSINESS
   TRIAL
+}
+
+enum TenantStatus {
+  SETUP
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
 }
 
 enum SubscriptionTier {
@@ -424,4 +498,11 @@ enum ImpactLevel {
   MEDIUM
   HIGH
   CRITICAL
+}
+
+enum MenuLocation {
+  HEADER
+  SIDEBAR
+  FOOTER
+  CUSTOM
 }

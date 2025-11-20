@@ -10,12 +10,21 @@ export interface AuthenticatedRequest extends Request {
     name: string;
     tenantId?: string;
     role?: string;
+    currentTenantId?: string;
+    userAssignments?: any[];
   };
   tenant?: {
     id: string;
     name: string;
     slug: string;
   };
+  userRole?: {
+    id: string;
+    name: string;
+    displayName: string;
+    level: string;
+  };
+  userPermissions?: string[];
 }
 
 export const authMiddleware = async (
@@ -39,7 +48,7 @@ export const authMiddleware = async (
     // Verify JWT token
     const decoded = jwt.verify(token, process.env.JWT_SECRET!) as any;
 
-    // Get user from database
+    // Get user from database with role information
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
       select: {
@@ -49,6 +58,29 @@ export const authMiddleware = async (
         status: true,
         currentTenantId: true,
         tokenVersion: true,
+        userAssignments: {
+          where: {
+            status: 'ACTIVE' as any,
+            OR: [
+              { expiresAt: null },
+              { expiresAt: { gt: new Date() } }
+            ]
+          },
+          include: {
+            role: true,
+            tenant: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                status: true
+              }
+            }
+          },
+          orderBy: {
+            assignedAt: 'desc'
+          }
+        }
       },
     });
 
@@ -103,6 +135,7 @@ export const authMiddleware = async (
       email: user.email,
       name: user.name,
       ...(user.currentTenantId && { tenantId: user.currentTenantId }),
+      ...(user.userAssignments && { userAssignments: user.userAssignments }),
     };
 
     if (currentTenant) {

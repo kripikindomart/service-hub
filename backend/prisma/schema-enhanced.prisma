@@ -1,0 +1,720 @@
+// Service Hub 2.0 Enhanced Database Schema
+// Integration Platform as a Service (iPaaS)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ========================================
+// CORE USER & TENANT MODELS
+// ========================================
+
+model User {
+  id                    String    @id @default(cuid())
+  email                 String    @unique
+  username              String    @unique
+  passwordHash          String
+  firstName             String
+  lastName              String
+  avatar                String?
+  status                UserStatus @default(ACTIVE)
+  lastLoginAt           DateTime?
+  emailVerifiedAt       DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  // Relations
+  userAssignments       UserAssignment[]
+  userSessions          UserSession[]
+  activityLogs          ActivityLog[]
+  auditLogs             AuditLog[]
+  notifications         Notification[]
+  userRoles             UserRole[]
+
+  @@map("users")
+}
+
+model Tenant {
+  id                    String    @id @default(cuid())
+  name                  String
+  slug                  String    @unique
+  domain                String    @unique
+  description           String?
+  logo                  String?
+  status                TenantStatus @default(ACTIVE)
+  settings              Json      @default("{}")
+  subscriptionId        String?   @unique
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  // Relations
+  userAssignments       UserAssignment[]
+  services              TenantService[]
+  tenantRoles           TenantRole[]
+  serviceIntegrations   ServiceIntegration[]
+  workflows             WorkflowDefinition[]
+  databases             TenantDatabase[]
+  auditLogs             AuditLog[]
+  notifications         Notification[]
+
+  @@map("tenants")
+}
+
+model UserAssignment {
+  id                    String    @id @default(cuid())
+  userId                String
+  tenantId              String
+  status                AssignmentStatus @default(ACTIVE)
+  assignedBy            String
+  assignedAt            DateTime  @default(now())
+  lastAccessAt          DateTime?
+  settings              Json      @default("{}")
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  // Relations
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant                Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, tenantId])
+  @@map("user_assignments")
+}
+
+// ========================================
+// ROLE & PERMISSION MODELS
+// ========================================
+
+model Role {
+  id                    String    @id @default(cuid())
+  name                  String
+  description           String?
+  type                  RoleType  @default(CUSTOM)
+  scope                 RoleScope @default(TENANT)
+  isSystem              Boolean   @default(false)
+  permissions           Json      @default("[]") // Array of permission strings
+  status                RoleStatus @default(ACTIVE)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  // Relations
+  userRoles             UserRole[]
+  tenantRoles           TenantRole[]
+
+  @@unique([name, scope])
+  @@map("roles")
+}
+
+model UserRole {
+  id                    String    @id @default(cuid())
+  userId                String
+  roleId                String
+  tenantId              String?
+  assignedBy            String
+  assignedAt            DateTime  @default(now())
+  expiresAt             DateTime?
+  status                RoleAssignmentStatus @default(ACTIVE)
+  context               Json?     @default("{}") // Additional context for conditional permissions
+
+  // Relations
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role                  Role      @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId, tenantId])
+  @@map("user_roles")
+}
+
+model TenantRole {
+  id                    String    @id @default(cuid())
+  tenantId              String
+  roleId                String
+  isActive              Boolean   @default(true)
+  customizedName        String?
+  customizedPermissions Json?     @default("{}")
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  // Relations
+  tenant                Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  role                  Role      @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, roleId])
+  @@map("tenant_roles")
+}
+
+model Permission {
+  id                    String    @id @default(cuid())
+  name                  String    @unique
+  displayName           String
+  description           String?
+  resource              String
+  action                String
+  scope                 PermissionScope @default(TENANT)
+  category              String
+  conditions            Json?     @default("{}") // Conditions for attribute-based access control
+  status                PermissionStatus @default(ACTIVE)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@map("permissions")
+}
+
+// ========================================
+// SERVICE REGISTRY MODELS
+// ========================================
+
+model ServiceDefinition {
+  id                    String    @id @default(cuid())
+  name                  String
+  displayName           String
+  description           String?
+  version               String
+  type                  ServiceType @default(INTERNAL)
+  category              String
+  status                ServiceStatus @default(ACTIVE)
+  icon                  String?
+  color                 String?
+
+  // Configuration
+  requiredPermissions   Json      @default("{}")
+  apiConfig             Json      @default("{}")
+  databaseConfig        Json      @default("{}")
+  uiConfig              Json      @default("{}")
+
+  // Metadata
+  documentation         String?
+  repository            String?
+  tags                  String[]  @default([])
+  dependencies          String[]  @default([])
+
+  // Relationships
+  publishedBy           String
+  publishedAt           DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  // Relations
+  modules               ServiceModule[]
+  tenantServices        TenantService[]
+
+  @@unique([name, version])
+  @@map("service_definitions")
+}
+
+model ServiceModule {
+  id                    String    @id @default(cuid())
+  serviceId             String
+  name                  String
+  displayName           String
+  description           String?
+  version               String
+  type                  ModuleType @default(FEATURE)
+  status                ModuleStatus @default(ACTIVE)
+
+  // Configuration
+  requiredPermissions   Json      @default("{}")
+  apiConfig             Json      @default("{}")
+  formConfig            Json      @default("{}")
+  outputConfig          Json      @default("{}")
+  menuConfig            Json      @default("{}")
+
+  // Implementation
+  componentPath         String?
+  routePath             String?
+  icon                  String?
+  order                 Int       @default(0)
+  parentModule          String?
+
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  // Relations
+  service               ServiceDefinition @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@unique([serviceId, name])
+  @@map("service_modules")
+}
+
+model TenantService {
+  id                    String    @id @default(cuid())
+  tenantId              String
+  serviceId             String
+  status                TenantServiceStatus @default(ACTIVE)
+  configuration         Json      @default("{}")
+  customSettings        Json      @default("{}")
+  enabledModules        String[]  @default([])
+
+  // Access Control
+  accessRules           Json      @default("{}")
+  rateLimiting          Json?     @default("{}")
+
+  // Provisioning
+  provisionedAt         DateTime  @default(now())
+  lastAccessAt          DateTime?
+
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  // Relations
+  tenant                Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  service               ServiceDefinition @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, serviceId])
+  @@map("tenant_services")
+}
+
+// ========================================
+// WORKFLOW & FORM MODELS
+// ========================================
+
+model WorkflowDefinition {
+  id                    String    @id @default(cuid())
+  tenantId              String
+  name                  String
+  description           String?
+  version               String    @default("1.0.0")
+  status                WorkflowStatus @default(DRAFT)
+
+  // Workflow Definition
+  triggers              Json      @default("[]")
+  steps                 Json      @default("[]")
+  conditions            Json      @default("{}")
+  variables             Json      @default("{}")
+
+  // Configuration
+  timeout               Int?      @default(3600) // seconds
+  retryPolicy           Json?     @default("{}")
+
+  createdBy             String
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  // Relations
+  tenant                Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("workflow_definitions")
+}
+
+model FormDefinition {
+  id                    String    @id @default(cuid())
+  tenantId              String
+  serviceId             String?
+  name                  String
+  displayName           String
+  description           String?
+  version               String    @default("1.0.0")
+  status                FormStatus @default(DRAFT)
+
+  // Form Structure
+  schema                 Json      @default("{}")
+  validation            Json      @default("{}")
+  uiConfig              Json      @default("{}")
+
+  // Submission Configuration
+  submissionAction      Json      @default("{}")
+  notificationConfig    Json?     @default("{}")
+
+  createdBy             String
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@map("form_definitions")
+}
+
+// ========================================
+// BILLING & SUBSCRIPTION MODELS
+// ========================================
+
+model SubscriptionPlan {
+  id                    String    @id @default(cuid())
+  name                  String
+  displayName           String
+  description           String?
+  type                  PlanType  @default(MONTHLY)
+  price                 Decimal
+  currency              String    @default("USD")
+
+  // Limits
+  userLimit             Int?
+  serviceLimit          Int?
+  storageLimit          BigInt?   // bytes
+  bandwidthLimit        BigInt?   // bytes
+  apiCallLimit          Int?      // per month
+
+  // Features
+  features              Json      @default("{}")
+  allowedServices       String[]  @default([])
+
+  status                PlanStatus @default(ACTIVE)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([name, type])
+  @@map("subscription_plans")
+}
+
+model Subscription {
+  id                    String    @id @default(cuid())
+  tenantId              String
+  planId                String
+  status                SubscriptionStatus @default(ACTIVE)
+
+  // Billing
+  currentPeriodStart    DateTime
+  currentPeriodEnd      DateTime
+  nextBillingDate       DateTime
+  amount                Decimal
+  currency              String    @default("USD")
+
+  // Usage Tracking
+  currentUsage          Json      @default("{}")
+  usageLimits           Json      @default("{}")
+
+  // Payment
+  paymentMethodId       String?
+  lastPaymentAt         DateTime?
+  nextPaymentAt         DateTime?
+
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([tenantId])
+  @@map("subscriptions")
+}
+
+// ========================================
+// SYSTEM MODELS
+// ========================================
+
+model UserSession {
+  id                    String    @id @default(cuid())
+  userId                String
+  token                 String    @unique
+  refreshToken          String?   @unique
+  ipAddress             String?
+  userAgent             String?
+  status                SessionStatus @default(ACTIVE)
+  lastActivityAt        DateTime  @default(now())
+  expiresAt             DateTime
+  createdAt             DateTime  @default(now())
+
+  // Relations
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_sessions")
+}
+
+model ActivityLog {
+  id                    String    @id @default(cuid())
+  userId                String
+  tenantId              String?
+  action                String
+  resource              String?
+  resourceId            String?
+  details               Json      @default("{}")
+  ipAddress             String?
+  userAgent             String?
+  createdAt             DateTime  @default(now())
+
+  // Relations
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("activity_logs")
+}
+
+model AuditLog {
+  id                    String    @id @default(cuid())
+  tenantId              String?
+  userId                String?
+  action                String
+  resourceType          String
+  resourceId            String?
+  oldValues             Json?
+  newValues             Json?
+  metadata              Json      @default("{}")
+  ipAddress             String?
+  userAgent             String?
+  createdAt             DateTime  @default(now())
+
+  // Relations
+  tenant                Tenant?   @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  user                  User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@map("audit_logs")
+}
+
+model Notification {
+  id                    String    @id @default(cuid())
+  userId                String
+  tenantId              String?
+  type                  NotificationType
+  title                 String
+  message               String
+  data                  Json?     @default("{}")
+  status                NotificationStatus @default(UNREAD)
+  priority              NotificationPriority @default(NORMAL)
+  channels              String[]  @default(["IN_APP"])
+  scheduledAt           DateTime?
+  sentAt                DateTime?
+  readAt                DateTime?
+  createdAt             DateTime  @default(now())
+
+  // Relations
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant                Tenant?   @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  @@map("notifications")
+}
+
+model TenantDatabase {
+  id                    String    @id @default(cuid())
+  tenantId              String
+  serviceId             String?
+  name                  String
+  type                  DatabaseType @default(SHARED)
+  status                DatabaseStatus @default(ACTIVE)
+
+  // Configuration
+  host                  String
+  port                  Int
+  database              String
+  username              String
+  password              String    // Encrypted
+  sslMode               Boolean   @default(true)
+  poolSize              Int?      @default(10)
+
+  // Backup Configuration
+  backupEnabled         Boolean   @default(true)
+  backupSchedule        String?   @default("0 2 * * *") // cron format
+  retentionDays         Int       @default(30)
+
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  // Relations
+  tenant                Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("tenant_databases")
+}
+
+model ServiceIntegration {
+  id                    String    @id @default(cuid())
+  tenantId              String
+  serviceId             String
+  externalService       String
+  integrationType       IntegrationType @default(API)
+
+  // Configuration
+  configuration         Json      @default("{}")
+  credentials           Json      @default("{}") // Encrypted
+  webhookUrl            String?
+
+  // Status
+  status                IntegrationStatus @default(ACTIVE)
+  lastSyncAt            DateTime?
+  syncFrequency         String?   @default("0 */6 * * *") // cron format
+
+  // Monitoring
+  healthCheckUrl        String?
+  healthCheckInterval   Int?      @default(300) // seconds
+  lastHealthCheck       DateTime?
+  isHealthy             Boolean   @default(true)
+
+  createdBy             String
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  // Relations
+  tenant                Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("service_integrations")
+}
+
+// ========================================
+// ENUMS
+// ========================================
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING
+}
+
+enum TenantStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  TRIAL
+}
+
+enum AssignmentStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING
+}
+
+enum RoleType {
+  SYSTEM
+  CUSTOM
+}
+
+enum RoleScope {
+  GLOBAL
+  TENANT
+  SERVICE
+  MODULE
+}
+
+enum RoleStatus {
+  ACTIVE
+  INACTIVE
+  DEPRECATED
+}
+
+enum RoleAssignmentStatus {
+  ACTIVE
+  INACTIVE
+  EXPIRED
+  SUSPENDED
+}
+
+enum PermissionScope {
+  GLOBAL
+  TENANT
+  SERVICE
+  MODULE
+  DATA
+}
+
+enum PermissionStatus {
+  ACTIVE
+  INACTIVE
+  DEPRECATED
+}
+
+enum ServiceType {
+  INTERNAL
+  EXTERNAL
+  COMPOSITE
+}
+
+enum ServiceStatus {
+  ACTIVE
+  INACTIVE
+  DEPRECATED
+  BETA
+}
+
+enum ModuleType {
+  FEATURE
+  INTEGRATION
+  WIDGET
+  UTILITY
+}
+
+enum ModuleStatus {
+  ACTIVE
+  INACTIVE
+  DEPRECATED
+  BETA
+}
+
+enum TenantServiceStatus {
+  ACTIVE
+  INACTIVE
+  PROVISIONING
+  ERROR
+}
+
+enum WorkflowStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum FormStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum PlanType {
+  MONTHLY
+  YEARLY
+  CUSTOM
+}
+
+enum PlanStatus {
+  ACTIVE
+  INACTIVE
+  DEPRECATED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  INACTIVE
+  CANCELLED
+  TRIAL
+  PAST_DUE
+}
+
+enum SessionStatus {
+  ACTIVE
+  EXPIRED
+  TERMINATED
+}
+
+enum NotificationType {
+  SYSTEM
+  BILLING
+  SERVICE
+  WORKFLOW
+  SECURITY
+  MARKETING
+}
+
+enum NotificationStatus {
+  UNREAD
+  READ
+  ARCHIVED
+}
+
+enum NotificationPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum DatabaseType {
+  SHARED
+  DEDICATED
+  HYBRID
+}
+
+enum DatabaseStatus {
+  ACTIVE
+  INACTIVE
+  MAINTENANCE
+  ERROR
+}
+
+enum IntegrationType {
+  API
+  WEBHOOK
+  DATABASE
+  FILE_TRANSFER
+}
+
+enum IntegrationStatus {
+  ACTIVE
+  INACTIVE
+  ERROR
+  CONFIGURING
+}
